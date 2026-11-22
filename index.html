@@ -882,263 +882,357 @@
     <!-- MapLibre GL & Safe Cloud Storage Logic -->
     <script>
         // ==========================================
-        // 1. CONFIGURATION & GLOBAL STATE
+        // 1. CONFIGURATION, STATE & GEOMETRY HELPERS
         // ==========================================
         const DEFAULT_FIREBASE_CONFIG = {
-            apiKey: "AIzaSyBoPjg-xe22aybo9nSmtH0SM2cPfy8XM6U",
+            apiKey: "",
             authDomain: "mormaps-1071.firebaseapp.com",
             projectId: "mormaps-1071",
-            storageBucket: "mormaps-1071.firebasestorage.app",
-            messagingSenderId: "237003719337",
-            appId: "1:237003719337:web:5ca919e1365a8ac8f71fb8",
-            measurementId: "G-EF56Y8FSD3"
+            storageBucket: "mormaps-1071.appspot.com",
+            messagingSenderId: "",
+            appId: ""
         };
 
-        const LOCAL_STORAGE_KEY = 'israel_map_saved_items_v1';
         const CUSTOM_CLOUD_CFG_KEY = 'israel_map_custom_fb_cfg_v1';
-        const LOCAL_PASS_KEY = 'israel_map_access_password_v1';
-        const RECOVERY_PHONE_CANONICAL = '0539227598';
-
-        const PALETTE_COLORS = [
-            '#2563eb', '#d97706', '#059669', '#dc2626',
-            '#7c3aed', '#0891b2', '#db2777', '#0f172a'
-        ];
-
-        const urlHashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-        const appId = urlHashParams.get('room') || 'israel-shared-map-v1';
-
+        let appId = 'mormaps-1071';
         let firebaseConfig = { ...DEFAULT_FIREBASE_CONFIG };
+
         try {
-            const hashCfg = urlHashParams.get('cfg');
-            if (hashCfg) {
-                firebaseConfig = JSON.parse(decodeURIComponent(escape(atob(hashCfg))));
-            } else {
-                const storedCfg = localStorage.getItem(CUSTOM_CLOUD_CFG_KEY);
-                if (storedCfg) firebaseConfig = JSON.parse(storedCfg);
+            const hashStr = window.location.hash ? window.location.hash.slice(1) : '';
+            if (hashStr) {
+                const params = new URLSearchParams(hashStr);
+                const roomParam = params.get('room');
+                if (roomParam) appId = roomParam;
+                const cfgParam = params.get('cfg');
+                if (cfgParam) {
+                    const decoded = JSON.parse(decodeURIComponent(escape(atob(cfgParam))));
+                    if (decoded && decoded.projectId) {
+                        firebaseConfig = decoded;
+                    }
+                }
             }
         } catch (e) {}
 
-        let cloudPasswordHash = localStorage.getItem(LOCAL_PASS_KEY) || '';
+        try {
+            const savedCustomCfg = localStorage.getItem(CUSTOM_CLOUD_CFG_KEY);
+            if (savedCustomCfg) {
+                const parsedCustom = JSON.parse(savedCustomCfg);
+                if (parsedCustom && parsedCustom.projectId) {
+                    firebaseConfig = { ...firebaseConfig, ...parsedCustom };
+                }
+            }
+        } catch (e) {}
+
+        const LOCAL_STORAGE_KEY = `israel_map_saved_items_${appId}_v1`;
+        const LOCAL_PASS_KEY = `israel_map_auth_pass_${appId}_v1`;
+        const RECOVERY_PHONE_DIGITS = '0539227598';
+        let cloudPasswordHash = '';
+
+        const PALETTE_COLORS = [
+            '#2563eb', '#d97706', '#059669', '#dc2626',
+            '#7c3aed', '#db2777', '#0891b2', '#475569'
+        ];
 
         const state = {
             items: [],
-            cloudReady: false,
             mapMode: 'street',
             showPermanentLabels: true,
+            currentFilter: 'all',
+            searchFilterText: '',
             highlightedItemId: null,
+            activeItem: null,
+            selectedColor: '#2563eb',
+            pendingCoords: null,
+            pendingPolygonPoints: null,
             isDrawing: false,
             drawPoints: [],
             isMeasuring: false,
             isDraggingMeasure: false,
             measureStart: null,
             measureEnd: null,
-            selectedColor: '#2563eb',
-            pendingCoords: null,
-            pendingPolygonPoints: null,
-            activeItem: null,
-            searchFilterText: '',
-            currentFilter: 'all',
+            cloudReady: false,
             confirmCallback: null
         };
 
         let map = null;
         let mapLoaded = false;
-        const savedMarkersMap = new Map();
-        let drawVertexMarkers = [];
-        let measureLabelMarker = null;
         let gpsMarker = null;
-        let tempSearchMarker = null;
         let sharedPinMarker = null;
+        let tempSearchMarker = null;
+        let measureLabelMarker = null;
+        let drawVertexMarkers = [];
+        const savedMarkersMap = new Map();
         let currentSharedLocation = null;
 
-        // ==========================================
-        // 2. GEOMETRY & DISTANCE HELPERS
-        // ==========================================
-        function haversineDistance(p1, p2) {
+        function haversineDistance(a, b) {
             const R = 6371000;
             const toRad = d => (d * Math.PI) / 180;
-            const dLat = toRad(p2.lat - p1.lat);
-            const dLng = toRad(p2.lng - p1.lng);
-            const a = Math.sin(dLat / 2) ** 2 +
-                      Math.cos(toRad(p1.lat)) * Math.cos(toRad(p2.lat)) * Math.sin(dLng / 2) ** 2;
-            return 2 * R * Math.asin(Math.sqrt(a));
+            const dLat = toRad(b.lat - a.lat);
+            const dLng = toRad(b.lng - a.lng);
+            const lat1 = toRad(a.lat);
+            const lat2 = toRad(b.lat);
+            const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+            return 2 * R * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
         }
 
         function formatDistanceHebrew(meters) {
-            if (meters < 1000) return `${Math.round(meters).toLocaleString()} מ'`;
-            return `${(meters / 1000).toFixed(2)} ק"מ`;
-        }
-
-        function getPolygonCenter(pts) {
-            if (!Array.isArray(pts) || pts.length === 0) return { lat: 31.7683, lng: 35.2137 };
-            let sumLat = 0, sumLng = 0;
-            pts.forEach(p => { sumLat += p.lat; sumLng += p.lng; });
-            return { lat: sumLat / pts.length, lng: sumLng / pts.length };
-        }
-
-        function calculatePolygonMetrics(pts) {
-            if (!Array.isArray(pts) || pts.length < 3) return { sqm: 0, dunam: 0, perimeter: 0 };
-            let perimeter = 0;
-            for (let i = 0; i < pts.length; i++) {
-                perimeter += haversineDistance(pts[i], pts[(i + 1) % pts.length]);
+            if (!meters || meters < 1) return "0 מ'";
+            if (meters >= 1000) {
+                return `${(meters / 1000).toFixed(2)} ק"מ`;
             }
-            const refLat = pts[0].lat;
-            const mPerDegLat = 111132.92;
-            const mPerDegLng = 111412.84 * Math.cos((refLat * Math.PI) / 180);
-            let area = 0;
+            return `${Math.round(meters).toLocaleString()} מ'`;
+        }
+
+        function calculatePolygonMetrics(latlngs) {
+            if (!Array.isArray(latlngs) || latlngs.length < 3) {
+                return { sqm: 0, dunam: '0', perimeter: 0 };
+            }
+            const refLat = latlngs.reduce((sum, p) => sum + p.lat, 0) / latlngs.length;
+            const mPerDegLat = 111132.954 - 559.822 * Math.cos((2 * refLat * Math.PI) / 180);
+            const mPerDegLng = 111319.488 * Math.cos((refLat * Math.PI) / 180);
+
+            const pts = latlngs.map(p => ({
+                x: (p.lng - latlngs[0].lng) * mPerDegLng,
+                y: (p.lat - latlngs[0].lat) * mPerDegLat
+            }));
+
+            let area2 = 0;
             for (let i = 0; i < pts.length; i++) {
                 const j = (i + 1) % pts.length;
-                const x1 = pts[i].lng * mPerDegLng;
-                const y1 = pts[i].lat * mPerDegLat;
-                const x2 = pts[j].lng * mPerDegLng;
-                const y2 = pts[j].lat * mPerDegLat;
-                area += (x1 * y2 - x2 * y1);
+                area2 += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
             }
-            const sqm = Math.round(Math.abs(area) / 2);
-            const dunam = Number((sqm / 1000).toFixed(2));
-            return { sqm, dunam, perimeter: Math.round(perimeter) };
+            const sqm = Math.round(Math.abs(area2) / 2);
+            const dunam = (sqm / 1000).toFixed(2).replace(/\.?0+$/, '');
+
+            let perim = 0;
+            for (let i = 0; i < latlngs.length; i++) {
+                const j = (i + 1) % latlngs.length;
+                perim += haversineDistance(latlngs[i], latlngs[j]);
+            }
+
+            return { sqm, dunam, perimeter: Math.round(perim) };
+        }
+
+        function getPolygonCenter(latlngs) {
+            if (!Array.isArray(latlngs) || latlngs.length === 0) {
+                return { lat: 31.7683, lng: 35.2137 };
+            }
+            const lat = latlngs.reduce((acc, p) => acc + p.lat, 0) / latlngs.length;
+            const lng = latlngs.reduce((acc, p) => acc + p.lng, 0) / latlngs.length;
+            return { lat, lng };
         }
 
         // ==========================================
-        // 2B. ACCESS GATE / PASSWORD LOCK SCREEN
+        // 2. PASSWORD LOCK SCREEN & RECOVERY (0539227598)
         // ==========================================
         function initAuthLockScreen() {
-            const gate = document.getElementById('auth-lock-screen');
+            const lockScreen = document.getElementById('auth-lock-screen');
             const setupForm = document.getElementById('setup-password-form');
             const loginForm = document.getElementById('login-password-form');
             const recoveryForm = document.getElementById('recovery-password-form');
-            const titleEl = document.getElementById('lock-screen-title');
-            const subEl = document.getElementById('lock-screen-subtitle');
 
-            let recoveryPhoneVerified = false;
+            const setupPassInput = document.getElementById('setup-pass-input');
+            const setupPassConfirm = document.getElementById('setup-pass-confirm');
+            const setupErrorMsg = document.getElementById('setup-error-msg');
 
-            function unlockGate() {
-                gate.classList.add('hidden');
-                gate.style.display = 'none';
-                forceSyncFromCloud(false);
+            const loginPassInput = document.getElementById('login-pass-input');
+            const loginErrorMsg = document.getElementById('login-error-msg');
+            const toggleLoginVisBtn = document.getElementById('toggle-login-pass-vis');
+
+            const openRecoveryBtn = document.getElementById('open-recovery-btn');
+            const backToLoginBtn = document.getElementById('back-to-login-btn');
+            const recoveryPhoneInput = document.getElementById('recovery-phone-input');
+            const recoveryNewPassSection = document.getElementById('recovery-new-pass-section');
+            const recoveryNewPassInput = document.getElementById('recovery-new-pass');
+            const recoveryConfirmPassInput = document.getElementById('recovery-confirm-pass');
+            const recoveryErrorMsg = document.getElementById('recovery-error-msg');
+            const recoverySubmitBtn = document.getElementById('recovery-submit-btn');
+
+            const lockScreenTitle = document.getElementById('lock-screen-title');
+            const lockScreenSubtitle = document.getElementById('lock-screen-subtitle');
+            const manualLockBtn = document.getElementById('manual-lock-btn');
+
+            let phoneVerifiedForReset = false;
+
+            function getStoredPassword() {
+                try {
+                    const localPass = localStorage.getItem(LOCAL_PASS_KEY);
+                    if (localPass && localPass.trim()) return localPass.trim();
+                } catch (e) {}
+                return (cloudPasswordHash || '').trim();
             }
 
-            function refreshLockView() {
-                if (gate.style.display === 'none' || gate.classList.contains('hidden')) return;
-                if (!recoveryForm.classList.contains('hidden')) return;
-
-                if (!cloudPasswordHash) {
-                    setupForm.classList.remove('hidden');
-                    loginForm.classList.add('hidden');
-                    titleEl.textContent = 'הגדרת סיסמת כניסה';
-                    subEl.textContent = 'הגדר סיסמה חד-פעמית לאבטחת האתר';
-                } else {
-                    setupForm.classList.add('hidden');
-                    loginForm.classList.remove('hidden');
-                    titleEl.textContent = 'גישה מוגנת בסיסמה';
-                    subEl.textContent = 'הזן את סיסמת הכניסה לאתר המפות';
+            function hideLockScreen() {
+                if (lockScreen) {
+                    lockScreen.classList.add('hidden');
+                    lockScreen.style.display = 'none';
                 }
             }
 
-            window.__refreshLockScreenView = refreshLockView;
-            refreshLockView();
+            function showLockScreen() {
+                if (!lockScreen) return;
+                lockScreen.classList.remove('hidden');
+                lockScreen.style.display = 'flex';
+                refreshLockScreenView();
+            }
 
-            document.getElementById('toggle-login-pass-vis').addEventListener('click', () => {
-                const inp = document.getElementById('login-pass-input');
-                inp.type = inp.type === 'password' ? 'text' : 'password';
-            });
+            function refreshLockScreenView() {
+                const existingPass = getStoredPassword();
+                phoneVerifiedForReset = false;
+                if (recoveryNewPassSection) recoveryNewPassSection.classList.add('hidden');
+                if (recoveryErrorMsg) recoveryErrorMsg.classList.add('hidden');
+                if (loginErrorMsg) loginErrorMsg.classList.add('hidden');
+                if (setupErrorMsg) setupErrorMsg.classList.add('hidden');
 
-            setupForm.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const p1 = document.getElementById('setup-pass-input').value.trim();
-                const p2 = document.getElementById('setup-pass-confirm').value.trim();
-                const errEl = document.getElementById('setup-error-msg');
-                if (p1.length < 4 || p1 !== p2) {
-                    errEl.textContent = p1 !== p2 ? 'הסיסמאות אינן תואמות' : 'הסיסמה חייבת להכיל לפחות 4 תווים';
-                    errEl.classList.remove('hidden');
-                    return;
+                if (recoverySubmitBtn) {
+                    recoverySubmitBtn.innerHTML = '<i class="ph-bold ph-phone-call text-xl text-amber-400"></i> אמת מספר טלפון';
                 }
-                errEl.classList.add('hidden');
-                cloudPasswordHash = p1;
-                localStorage.setItem(LOCAL_PASS_KEY, p1);
-                savePasswordToCloud(p1);
-                unlockGate();
-            });
 
-            loginForm.addEventListener('submit', (e) => {
-                e.preventDefault();
-                const entered = document.getElementById('login-pass-input').value.trim();
-                const digitsOnly = entered.replace(/\D/g, '');
-                const errEl = document.getElementById('login-error-msg');
-
-                if (entered === cloudPasswordHash || digitsOnly === RECOVERY_PHONE_CANONICAL) {
-                    errEl.classList.add('hidden');
-                    document.getElementById('login-pass-input').value = '';
-                    unlockGate();
+                if (!existingPass) {
+                    if (lockScreenTitle) lockScreenTitle.textContent = 'הגדרת סיסמת כניסה';
+                    if (lockScreenSubtitle) lockScreenSubtitle.textContent = 'צור סיסמה חדשה להגנה על המפה';
+                    if (setupForm) setupForm.classList.remove('hidden');
+                    if (loginForm) loginForm.classList.add('hidden');
+                    if (recoveryForm) recoveryForm.classList.add('hidden');
                 } else {
-                    errEl.textContent = 'סיסמה שגויה. נסה שוב או לחץ על "שכחתי סיסמה".';
-                    errEl.classList.remove('hidden');
+                    if (lockScreenTitle) lockScreenTitle.textContent = 'גישה מוגנת בסיסמה';
+                    if (lockScreenSubtitle) lockScreenSubtitle.textContent = 'הזן את סיסמת הכניסה לאתר המפות';
+                    if (setupForm) setupForm.classList.add('hidden');
+                    if (loginForm) loginForm.classList.remove('hidden');
+                    if (recoveryForm) recoveryForm.classList.add('hidden');
                 }
-            });
+            }
 
-            document.getElementById('open-recovery-btn').addEventListener('click', () => {
-                recoveryPhoneVerified = false;
-                document.getElementById('recovery-new-pass-section').classList.add('hidden');
-                document.getElementById('recovery-error-msg').classList.add('hidden');
-                document.getElementById('recovery-submit-btn').innerHTML = '<i class="ph-bold ph-phone-call text-xl text-amber-400"></i> אמת מספר טלפון';
-                loginForm.classList.add('hidden');
-                setupForm.classList.add('hidden');
-                recoveryForm.classList.remove('hidden');
-                titleEl.textContent = 'שחזור ואיפוס סיסמה';
-                subEl.textContent = 'אימות באמצעות מספר הטלפון של מנהל האתר';
-            });
+            window.__refreshLockScreenView = refreshLockScreenView;
 
-            document.getElementById('back-to-login-btn').addEventListener('click', () => {
-                recoveryForm.classList.add('hidden');
-                refreshLockView();
-            });
+            if (toggleLoginVisBtn && loginPassInput) {
+                toggleLoginVisBtn.addEventListener('click', () => {
+                    const isPass = loginPassInput.type === 'password';
+                    loginPassInput.type = isPass ? 'text' : 'password';
+                });
+            }
 
-            recoveryForm.addEventListener('submit', (e) => {
-                e.preventDefault();
-                const errEl = document.getElementById('recovery-error-msg');
-                const phoneDigits = document.getElementById('recovery-phone-input').value.replace(/\D/g, '');
-
-                if (!recoveryPhoneVerified) {
-                    if (phoneDigits !== RECOVERY_PHONE_CANONICAL) {
-                        errEl.textContent = 'מספר הטלפון שהוזן אינו מורשה לשחזור סיסמה.';
-                        errEl.classList.remove('hidden');
+            if (setupForm) {
+                setupForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const p1 = (setupPassInput.value || '').trim();
+                    const p2 = (setupPassConfirm.value || '').trim();
+                    if (p1.length < 4) {
+                        setupErrorMsg.textContent = 'הסיסמה חייבת להכיל לפחות 4 תווים.';
+                        setupErrorMsg.classList.remove('hidden');
                         return;
                     }
-                    errEl.classList.add('hidden');
-                    recoveryPhoneVerified = true;
-                    document.getElementById('recovery-new-pass-section').classList.remove('hidden');
-                    document.getElementById('recovery-submit-btn').innerHTML = '<i class="ph-bold ph-shield-check text-xl text-emerald-400"></i> שמור סיסמה חדשה והיכנס';
-                    return;
-                }
+                    if (p1 !== p2) {
+                        setupErrorMsg.textContent = 'הסיסמאות אינן תואמות.';
+                        setupErrorMsg.classList.remove('hidden');
+                        return;
+                    }
+                    try {
+                        localStorage.setItem(LOCAL_PASS_KEY, p1);
+                    } catch (err) {}
+                    cloudPasswordHash = p1;
+                    await savePasswordToCloud(p1);
+                    hideLockScreen();
+                    showToast('סיסמת הכניסה נשמרה בהצלחה!');
+                });
+            }
 
-                const np1 = document.getElementById('recovery-new-pass').value.trim();
-                const np2 = document.getElementById('recovery-confirm-pass').value.trim();
-                if (np1.length < 4 || np1 !== np2) {
-                    errEl.textContent = np1 !== np2 ? 'הסיסמאות החדשות אינן תואמות' : 'יש להזין לפחות 4 תווים';
-                    errEl.classList.remove('hidden');
-                    return;
-                }
-                errEl.classList.add('hidden');
-                cloudPasswordHash = np1;
-                localStorage.setItem(LOCAL_PASS_KEY, np1);
-                savePasswordToCloud(np1);
-                recoveryForm.classList.add('hidden');
-                unlockGate();
-            });
+            if (loginForm) {
+                loginForm.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    const entered = (loginPassInput.value || '').trim();
+                    const stored = getStoredPassword();
+                    const cleanDigits = entered.replace(/\D/g, '');
 
-            document.getElementById('manual-lock-btn').addEventListener('click', () => {
-                gate.classList.remove('hidden');
-                gate.style.display = 'flex';
-                refreshLockView();
-            });
+                    if ((stored && entered === stored) || cleanDigits === RECOVERY_PHONE_DIGITS) {
+                        loginPassInput.value = '';
+                        loginErrorMsg.classList.add('hidden');
+                        hideLockScreen();
+                        forceSyncFromCloud(false);
+                        showToast('ברוך הבא למפה!');
+                    } else {
+                        loginErrorMsg.textContent = 'סיסמה שגויה. נסה שוב או לחץ על "שכחתי סיסמה".';
+                        loginErrorMsg.classList.remove('hidden');
+                    }
+                });
+            }
+
+            if (openRecoveryBtn) {
+                openRecoveryBtn.addEventListener('click', () => {
+                    loginForm.classList.add('hidden');
+                    setupForm.classList.add('hidden');
+                    recoveryForm.classList.remove('hidden');
+                    recoveryErrorMsg.classList.add('hidden');
+                    phoneVerifiedForReset = false;
+                    recoveryNewPassSection.classList.add('hidden');
+                    recoverySubmitBtn.innerHTML = '<i class="ph-bold ph-phone-call text-xl text-amber-400"></i> אמת מספר טלפון';
+                });
+            }
+
+            if (backToLoginBtn) {
+                backToLoginBtn.addEventListener('click', () => {
+                    refreshLockScreenView();
+                });
+            }
+
+            if (recoveryForm) {
+                recoveryForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const phoneDigits = (recoveryPhoneInput.value || '').replace(/\D/g, '');
+                    if (!phoneVerifiedForReset) {
+                        if (phoneDigits !== RECOVERY_PHONE_DIGITS) {
+                            recoveryErrorMsg.textContent = 'מספר הטלפון אינו תואם למספר המורשה לשחזור.';
+                            recoveryErrorMsg.classList.remove('hidden');
+                            return;
+                        }
+                        phoneVerifiedForReset = true;
+                        recoveryErrorMsg.classList.add('hidden');
+                        recoveryNewPassSection.classList.remove('hidden');
+                        recoverySubmitBtn.innerHTML = '<i class="ph-bold ph-key text-xl text-emerald-400"></i> שמור סיסמה חדשה והיכנס';
+                        return;
+                    }
+
+                    const np1 = (recoveryNewPassInput.value || '').trim();
+                    const np2 = (recoveryConfirmPassInput.value || '').trim();
+                    if (np1.length < 4) {
+                        recoveryErrorMsg.textContent = 'הסיסמה החדשה חייבת להכיל לפחות 4 תווים.';
+                        recoveryErrorMsg.classList.remove('hidden');
+                        return;
+                    }
+                    if (np1 !== np2) {
+                        recoveryErrorMsg.textContent = 'הסיסמאות החדשות אינן תואמות.';
+                        recoveryErrorMsg.classList.remove('hidden');
+                        return;
+                    }
+
+                    try {
+                        localStorage.setItem(LOCAL_PASS_KEY, np1);
+                    } catch (err) {}
+                    cloudPasswordHash = np1;
+                    await savePasswordToCloud(np1);
+                    recoveryPhoneInput.value = '';
+                    recoveryNewPassInput.value = '';
+                    recoveryConfirmPassInput.value = '';
+                    hideLockScreen();
+                    forceSyncFromCloud(false);
+                    showToast('הסיסמה עודכנה בהצלחה!');
+                });
+            }
+
+            if (manualLockBtn) {
+                manualLockBtn.addEventListener('click', showLockScreen);
+            }
+
+            refreshLockScreenView();
         }
 
         // ==========================================
-        // 3. CLOUD & LOCAL PERSISTENCE (OFFICIAL REAL-TIME FIRESTORE SYNC)
+        // 3. CLOUD & LOCAL PERSISTENCE (CLEAN DIRECT FIRESTORE SYNC)
         // ==========================================
         let db = null;
         let fsMod = null;
         let unsubscribeCloud = null;
+        let isSyncingNow = false;
 
         function loadLocalItems() {
             try {
@@ -1183,6 +1277,41 @@
             } catch (e) {}
         }
 
+        function applyCloudSnapshotDocs(snapshot) {
+            const nextItems = [];
+            let foundPassword = '';
+
+            snapshot.forEach((docSnap) => {
+                const docId = docSnap.id;
+                const data = docSnap.data();
+                if (!data) return;
+
+                if (docId === 'site_security_config' && data.password) {
+                    foundPassword = String(data.password).trim();
+                    return;
+                }
+
+                if (docId === 'deleted_items_registry') return;
+
+                if (data.id && !data.deleted) {
+                    nextItems.push(data);
+                }
+            });
+
+            if (foundPassword) {
+                cloudPasswordHash = foundPassword;
+                localStorage.setItem(LOCAL_PASS_KEY, cloudPasswordHash);
+                if (window.__refreshLockScreenView) window.__refreshLockScreenView();
+            }
+
+            nextItems.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+            state.items = nextItems;
+            saveLocalItems();
+            renderAll();
+            state.cloudReady = true;
+            updateSyncBadge(true, 'משותף לכולם בענן');
+        }
+
         async function initCloudStorage() {
             loadLocalItems();
             if (!firebaseConfig || !firebaseConfig.projectId) {
@@ -1194,45 +1323,23 @@
                 const appMod = await import('https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js');
                 fsMod = await import('https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js');
 
-                const appName = 'mormaps_live_' + firebaseConfig.projectId;
+                const appName = 'mormaps_sync_' + firebaseConfig.projectId + '_' + appId;
                 const existingApps = appMod.getApps();
                 const fbApp = existingApps.find(a => a.name === appName) || appMod.initializeApp(firebaseConfig, appName);
                 db = fsMod.getFirestore(fbApp);
+
+                const colRef = fsMod.collection(db, 'israel_map_items');
+
+                const initialSnap = await fsMod.getDocs(colRef);
+                applyCloudSnapshotDocs(initialSnap);
 
                 if (unsubscribeCloud) {
                     unsubscribeCloud();
                     unsubscribeCloud = null;
                 }
 
-                const colRef = fsMod.collection(db, 'israel_map_items');
                 unsubscribeCloud = fsMod.onSnapshot(colRef, (snapshot) => {
-                    state.cloudReady = true;
-                    updateSyncBadge(true, 'משותף לכולם בענן');
-
-                    const nextItems = [];
-                    snapshot.forEach((docSnap) => {
-                        const docId = docSnap.id;
-                        const data = docSnap.data();
-                        if (!data) return;
-
-                        if (docId === 'site_security_config' && data.password) {
-                            cloudPasswordHash = String(data.password).trim();
-                            localStorage.setItem(LOCAL_PASS_KEY, cloudPasswordHash);
-                            if (window.__refreshLockScreenView) window.__refreshLockScreenView();
-                            return;
-                        }
-
-                        if (docId === 'deleted_items_registry') return;
-
-                        if (data.id && !data.deleted) {
-                            nextItems.push(data);
-                        }
-                    });
-
-                    nextItems.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-                    state.items = nextItems;
-                    saveLocalItems();
-                    renderAll();
+                    applyCloudSnapshotDocs(snapshot);
                 }, (err) => {
                     console.warn('Firestore snapshot error:', err);
                     state.cloudReady = false;
@@ -1246,40 +1353,21 @@
         }
 
         async function forceSyncFromCloud(notify = true) {
+            if (isSyncingNow) return;
             if (!db || !fsMod) {
                 await initCloudStorage();
                 return;
             }
+            isSyncingNow = true;
             try {
                 const colRef = fsMod.collection(db, 'israel_map_items');
                 const snapshot = await fsMod.getDocs(colRef);
-                state.cloudReady = true;
-                updateSyncBadge(true, 'משותף לכולם בענן');
-
-                const nextItems = [];
-                snapshot.forEach((docSnap) => {
-                    const docId = docSnap.id;
-                    const data = docSnap.data();
-                    if (!data) return;
-                    if (docId === 'site_security_config' && data.password) {
-                        cloudPasswordHash = String(data.password).trim();
-                        localStorage.setItem(LOCAL_PASS_KEY, cloudPasswordHash);
-                        if (window.__refreshLockScreenView) window.__refreshLockScreenView();
-                        return;
-                    }
-                    if (docId === 'deleted_items_registry') return;
-                    if (data.id && !data.deleted) {
-                        nextItems.push(data);
-                    }
-                });
-
-                nextItems.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-                state.items = nextItems;
-                saveLocalItems();
-                renderAll();
+                applyCloudSnapshotDocs(snapshot);
                 if (notify) showToast(`סונכרנו ${state.items.length} כתובות ומתחמים מהענן!`);
             } catch (e) {
                 if (notify) showToast('שגיאת תקשורת בעת רענון מהענן', 'warning');
+            } finally {
+                isSyncingNow = false;
             }
         }
 
@@ -1292,6 +1380,10 @@
             }
             saveLocalItems();
             renderAll();
+
+            if (!db || !fsMod) {
+                await initCloudStorage();
+            }
 
             if (db && fsMod) {
                 try {
@@ -1310,6 +1402,10 @@
             state.items = state.items.filter(i => i.id !== itemId);
             saveLocalItems();
             renderAll();
+
+            if (!db || !fsMod) {
+                await initCloudStorage();
+            }
 
             if (db && fsMod) {
                 try {
@@ -1335,24 +1431,28 @@
                         type: 'raster',
                         tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
                         tileSize: 256,
+                        maxzoom: 19,
                         attribution: '&copy; OpenStreetMap contributors'
                     },
                     'esri-satellite': {
                         type: 'raster',
                         tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
                         tileSize: 256,
+                        maxzoom: 18,
                         attribution: '&copy; Esri World Imagery'
                     },
                     'esri-transport': {
                         type: 'raster',
                         tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}'],
                         tileSize: 256,
+                        maxzoom: 18,
                         attribution: '&copy; Esri Transportation'
                     },
                     'esri-labels': {
                         type: 'raster',
                         tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'],
                         tileSize: 256,
+                        maxzoom: 18,
                         attribution: '&copy; Esri Places & Boundaries'
                     },
                     'saved-polygons': {
@@ -1373,13 +1473,23 @@
                         id: 'street-layer',
                         type: 'raster',
                         source: 'osm-tiles',
-                        layout: { visibility: 'visible' }
+                        layout: { visibility: 'visible' },
+                        paint: {
+                            'raster-contrast': 0.16,
+                            'raster-saturation': 0.12,
+                            'raster-brightness-max': 0.98
+                        }
                     },
                     {
                         id: 'satellite-layer',
                         type: 'raster',
                         source: 'esri-satellite',
-                        layout: { visibility: 'none' }
+                        layout: { visibility: 'none' },
+                        paint: {
+                            'raster-contrast': 0.18,
+                            'raster-saturation': 0.15,
+                            'raster-brightness-min': 0.03
+                        }
                     },
                     {
                         id: 'satellite-transport-layer',
@@ -1448,7 +1558,7 @@
                 center: [initialLng, initialLat],
                 zoom: 8,
                 minZoom: 5,
-                maxZoom: 18,
+                maxZoom: 20,
                 pitchWithRotate: true,
                 touchPitch: true,
                 dragRotate: true,
@@ -1740,10 +1850,15 @@
                     labelEl.className = `polygon-map-label ${isHighlighted ? 'search-highlighted' : ''}`;
                     labelEl.style.borderColor = color;
                     labelEl.innerHTML = `<i class="ph-bold ph-polygon" style="color:${isHighlighted ? '#0f172a' : '#fbbf24'}"></i><span>${escapeHtml(item.title)}</span>`;
-                    labelEl.addEventListener('click', (ev) => {
-                        ev.stopPropagation();
+                    const triggerPolygonZoomAndCard = (ev) => {
+                        if (ev) {
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                        }
                         focusOnSavedItem(item, true);
-                    });
+                    };
+                    labelEl.addEventListener('click', triggerPolygonZoomAndCard);
+                    labelEl.addEventListener('touchend', triggerPolygonZoomAndCard, { passive: false });
 
                     const marker = new maplibregl.Marker({ element: labelEl, anchor: 'center' })
                         .setLngLat([center.lng, center.lat])
@@ -1786,21 +1901,35 @@
 
             if (item.type === 'polygon' && Array.isArray(item.latlngs) && item.latlngs.length >= 3) {
                 const center = getPolygonCenter(item.latlngs);
+                const bounds = new maplibregl.LngLatBounds();
+                item.latlngs.forEach(p => bounds.extend([p.lng, p.lat]));
                 const lngs = item.latlngs.map(p => p.lng);
                 const lats = item.latlngs.map(p => p.lat);
                 const span = Math.max(Math.max(...lngs) - Math.min(...lngs), Math.max(...lats) - Math.min(...lats));
-                let targetZoom = 16;
-                if (span > 0.05) targetZoom = 12.5;
-                else if (span > 0.015) targetZoom = 14;
-                else if (span > 0.005) targetZoom = 15.2;
 
-                map.jumpTo({ center: [center.lng, center.lat], zoom: Math.max(map.getZoom(), targetZoom) });
+                if (span > 0.015) {
+                    map.fitBounds(bounds, {
+                        padding: { top: 110, bottom: 260, left: 70, right: 70 },
+                        maxZoom: 15.5,
+                        duration: 500
+                    });
+                } else {
+                    map.easeTo({
+                        center: [center.lng, center.lat],
+                        zoom: 16,
+                        duration: 500
+                    });
+                }
             } else if (item.latlng) {
-                map.jumpTo({ center: [item.latlng.lng, item.latlng.lat], zoom: Math.max(map.getZoom(), 16.5) });
+                map.easeTo({
+                    center: [item.latlng.lng, item.latlng.lat],
+                    zoom: 16.5,
+                    duration: 500
+                });
             }
 
             if (openCard) {
-                setTimeout(() => openDetailsModal(item), 60);
+                setTimeout(() => openDetailsModal(item), 320);
             }
         }
 
@@ -2226,22 +2355,25 @@
                     const pRes = await fetch(photonUrl);
                     const pData = await pRes.json();
                     if (pData && Array.isArray(pData.features)) {
-                        pData.features.forEach((f, idx) => {
+                        for (let idx = 0; idx < pData.features.length; idx++) {
+                            const f = pData.features[idx];
                             const props = f.properties || {};
                             const geom = f.geometry || {};
                             if (Array.isArray(geom.coordinates)) {
-                                const nameParts = [props.name, props.street, props.city || props.town || props.village].filter(Boolean);
-                                const label = nameParts.join(', ');
-                                if (label && !addressResults.some(r => r.display_name.includes(props.name || '___'))) {
+                                const lat = geom.coordinates[1];
+                                const lng = geom.coordinates[0];
+                                // Convert English Photon results into clean Hebrew address via reverse geocoding
+                                const hebrewLabel = await reverseGeocode(lat, lng);
+                                if (hebrewLabel && !addressResults.some(r => r.display_name === hebrewLabel)) {
                                     addressResults.push({
                                         place_id: `photon_${idx}_${Date.now()}`,
-                                        lat: geom.coordinates[1],
-                                        lon: geom.coordinates[0],
-                                        display_name: label
+                                        lat,
+                                        lon: lng,
+                                        display_name: hebrewLabel
                                     });
                                 }
                             }
-                        });
+                        }
                     }
                 } catch (e) {}
             }
@@ -2581,10 +2713,7 @@ service cloud.firestore {
                 if (state.mapMode === 'street') {
                     // Switch to Satellite (with permanent road numbers, street names & city labels)
                     state.mapMode = 'satellite';
-                    map.setMaxZoom(17);
-                    if (map.getZoom() > 17) {
-                        map.easeTo({ zoom: 17, duration: 300 });
-                    }
+                    map.setMaxZoom(19.5);
                     map.setLayoutProperty('street-layer', 'visibility', 'none');
                     map.setLayoutProperty('satellite-layer', 'visibility', 'visible');
                     map.setLayoutProperty('satellite-transport-layer', 'visibility', 'visible');
@@ -2595,7 +2724,7 @@ service cloud.firestore {
                 } else {
                     // Switch back to Street Map
                     state.mapMode = 'street';
-                    map.setMaxZoom(18);
+                    map.setMaxZoom(20);
                     map.setLayoutProperty('street-layer', 'visibility', 'visible');
                     map.setLayoutProperty('satellite-layer', 'visibility', 'none');
                     map.setLayoutProperty('satellite-transport-layer', 'visibility', 'none');
@@ -2916,13 +3045,6 @@ service cloud.firestore {
                     forceSyncFromCloud(false);
                 }
             });
-
-            // Periodic silent sync fallback so mobile Chrome never stays stale even if background stream pauses
-            setInterval(() => {
-                if (document.visibilityState === 'visible') {
-                    forceSyncFromCloud(false);
-                }
-            }, 4000);
         });
     </script>
 </body>
