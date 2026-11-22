@@ -1,0 +1,2929 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>מפת ישראל חכמה - ניהול כתובות ומתחמים</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: Heebo & Inter for high-legibility Hebrew UI -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800;900&family=Inter:wght@500;700&display=swap" rel="stylesheet">
+    
+    <!-- MapLibre GL JS v3.6.2 (Supports smooth 2-finger pinch-rotate & pitch without cross-origin parent.location checks) -->
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <script>
+        // Prevent MapLibre GL SecurityError when running inside a cross-origin blob: iframe
+        (function () {
+            try {
+                // Test if accessing window.parent.location.href throws SecurityError
+                void window.parent.location.href;
+            } catch (e) {
+                try {
+                    const safeLocation = {
+                        href: 'https://localhost/',
+                        origin: 'https://localhost',
+                        protocol: 'https:',
+                        host: 'localhost',
+                        hostname: 'localhost',
+                        pathname: '/'
+                    };
+                    const safeParent = new Proxy(window.parent, {
+                        get(target, prop) {
+                            if (prop === 'location') return safeLocation;
+                            try {
+                                const val = target[prop];
+                                return typeof val === 'function' ? val.bind(target) : val;
+                            } catch (err) {
+                                return undefined;
+                            }
+                        }
+                    });
+                    Object.defineProperty(window, 'parent', {
+                        value: safeParent,
+                        configurable: true
+                    });
+                } catch (proxyErr) {
+                    // Fallback handled via workerUrl blob below
+                }
+            }
+        })();
+    </script>
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <script>
+        // Provide a same-origin Blob Worker wrapper so MapLibre never tries cross-origin Worker or parent.location.href
+        if (window.maplibregl) {
+            try {
+                const workerBlob = new Blob(
+                    ['importScripts("https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl-csp-worker.js");'],
+                    { type: 'application/javascript' }
+                );
+                window.maplibregl.workerUrl = URL.createObjectURL(workerBlob);
+            } catch (e) {
+                console.warn('Worker blob fallback:', e);
+            }
+        }
+    </script>
+
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <style>
+        * {
+            -webkit-tap-highlight-color: transparent;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Heebo', 'Inter', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+            background-color: #0f172a;
+        }
+
+        /* MapLibre Container & RTL fixes */
+        .maplibregl-map {
+            font-family: 'Heebo', sans-serif !important;
+        }
+        .maplibregl-ctrl-attrib {
+            font-size: 10px !important;
+            background: rgba(255, 255, 255, 0.85) !important;
+            border-radius: 8px 0 0 0 !important;
+            padding: 2px 6px !important;
+        }
+
+        /* Permanent Polygon Name Label rendered directly over the Map */
+        .polygon-map-label {
+            background: rgba(15, 23, 42, 0.92);
+            color: #ffffff;
+            border: 2px solid #ffffff;
+            border-radius: 12px;
+            padding: 4px 10px;
+            font-weight: 800;
+            font-size: 13px;
+            line-height: 1.25;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+            white-space: nowrap;
+            pointer-events: auto;
+            cursor: pointer;
+            transition: transform 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            max-width: 220px;
+        }
+
+        .polygon-map-label span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Highlighted state when user searches for this polygon! */
+        .polygon-map-label.search-highlighted {
+            background: #f59e0b !important;
+            color: #0f172a !important;
+            border-color: #0f172a !important;
+            transform: scale(1.18);
+            z-index: 30 !important;
+            box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.45), 0 10px 24px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Custom Pin Marker */
+        .custom-pin-wrapper {
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+        .custom-pin-wrapper.search-highlighted {
+            transform: scale(1.25);
+            z-index: 30 !important;
+        }
+
+        /* Crosshair subtle animation */
+        @keyframes pulse-ring {
+            0% { transform: scale(0.96); opacity: 0.85; }
+            50% { transform: scale(1.04); opacity: 1; }
+            100% { transform: scale(0.96); opacity: 0.85; }
+        }
+        .crosshair-active {
+            animation: pulse-ring 2.2s infinite ease-in-out;
+        }
+
+        /* Safe area padding for modern phones */
+        .pb-safe {
+            padding-bottom: max(1rem, env(safe-area-inset-bottom));
+        }
+        .pt-safe {
+            padding-top: max(0.75rem, env(safe-area-inset-top));
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="h-[100dvh] w-screen relative select-none text-slate-900">
+
+    <!-- FULLSCREEN ACCESS GATE / PASSWORD LOCK OVERLAY (Required on every entry; recovery strictly via 0539227598) -->
+    <div id="auth-lock-screen" class="fixed inset-0 z-[100] bg-slate-950/95 backdrop-blur-xl flex items-center justify-center p-4 overflow-y-auto">
+        <div class="bg-white w-full max-w-md rounded-3xl shadow-2xl border-2 border-slate-300 overflow-hidden">
+            <!-- Lock Header -->
+            <div class="bg-slate-900 text-white p-6 text-center space-y-2 border-b border-slate-800">
+                <div class="w-16 h-16 bg-blue-600/20 border-2 border-blue-500 text-blue-400 rounded-2xl flex items-center justify-center mx-auto shadow-lg">
+                    <i id="lock-screen-icon" class="ph-bold ph-lock-key text-3xl"></i>
+                </div>
+                <h1 id="lock-screen-title" class="text-xl font-black tracking-tight">גישה מוגנת בסיסמה</h1>
+                <p id="lock-screen-subtitle" class="text-xs text-slate-300 font-medium">הזן את סיסמת הכניסה לאתר המפות</p>
+            </div>
+
+            <!-- View 1: Initial Setup (Shown only if no password exists yet) -->
+            <form id="setup-password-form" class="hidden p-6 space-y-4">
+                <div class="bg-blue-50 border border-blue-200 rounded-2xl p-3 text-xs text-blue-950 font-bold leading-relaxed">
+                    הגדר כעת סיסמת כניסה ראשית לאתר. סיסמה זו תידרש בכל פתיחה של הקישור.
+                </div>
+                <div>
+                    <label class="block text-sm font-extrabold text-slate-900 mb-1">בחר סיסמת כניסה חדשה</label>
+                    <input type="password" id="setup-pass-input" required minlength="4" placeholder="הקלד סיסמה (לפחות 4 תווים)..."
+                        class="w-full border-2 border-slate-300 rounded-xl px-4 py-3 text-base font-bold text-slate-950 focus:outline-none focus:border-blue-600">
+                </div>
+                <div>
+                    <label class="block text-sm font-extrabold text-slate-900 mb-1">אימות סיסמה</label>
+                    <input type="password" id="setup-pass-confirm" required minlength="4" placeholder="הקלד שוב לאימות..."
+                        class="w-full border-2 border-slate-300 rounded-xl px-4 py-3 text-base font-bold text-slate-950 focus:outline-none focus:border-blue-600">
+                </div>
+                <p id="setup-error-msg" class="hidden text-xs font-extrabold text-rose-600"></p>
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold py-3.5 rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all">
+                    <i class="ph-bold ph-shield-check text-xl"></i>
+                    שמור סיסמה והיכנס לאתר
+                </button>
+            </form>
+
+            <!-- View 2: Login Form (Required on every page open) -->
+            <form id="login-password-form" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-extrabold text-slate-900 mb-1">סיסמת כניסה</label>
+                    <div class="relative">
+                        <input type="password" id="login-pass-input" required placeholder="הזן סיסמה..."
+                            class="w-full border-2 border-slate-300 rounded-xl px-4 py-3.5 text-base font-bold text-slate-950 focus:outline-none focus:border-blue-600">
+                        <button type="button" id="toggle-login-pass-vis" class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1">
+                            <i class="ph-bold ph-eye text-xl"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <p id="login-error-msg" class="hidden text-xs font-extrabold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl p-2.5"></p>
+
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold py-3.5 rounded-xl shadow-lg flex items-center justify-center gap-2 text-base transition-all">
+                    <i class="ph-bold ph-sign-in text-xl"></i>
+                    כניסה למפה
+                </button>
+
+                <div class="pt-2 border-t border-slate-200 text-center">
+                    <button type="button" id="open-recovery-btn" class="text-xs font-extrabold text-slate-600 hover:text-blue-600 underline transition-colors">
+                        שכחתי סיסמה / שחזור סיסמה
+                    </button>
+                </div>
+            </form>
+
+            <!-- View 3: Password Recovery (Verified strictly via 0539227598) -->
+            <form id="recovery-password-form" class="hidden p-6 space-y-4">
+                <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs text-amber-950 font-bold leading-relaxed flex items-start gap-2">
+                    <i class="ph-bold ph-shield-warning text-lg text-amber-600 shrink-0 mt-0.5"></i>
+                    <span>שחזור ואיפוס סיסמה מתאפשרים אך ורק לאחר אימות מספר הטלפון של מנהל האתר.</span>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-extrabold text-slate-900 mb-1">הזן את מספר הטלפון המורשה לשחזור</label>
+                    <input type="tel" id="recovery-phone-input" required dir="ltr" placeholder="05X-XXXXXXX"
+                        class="w-full border-2 border-slate-300 rounded-xl px-4 py-3 text-base font-mono font-bold text-slate-950 focus:outline-none focus:border-blue-600 text-center">
+                </div>
+
+                <div id="recovery-new-pass-section" class="hidden space-y-3 pt-1 border-t border-slate-200">
+                    <div class="text-xs font-extrabold text-emerald-700 flex items-center gap-1.5">
+                        <i class="ph-bold ph-check-circle text-base"></i>
+                        המספר אומת בהצלחה! הגדר סיסמה חדשה:
+                    </div>
+                    <div>
+                        <label class="block text-xs font-extrabold text-slate-800 mb-1">סיסמה חדשה</label>
+                        <input type="password" id="recovery-new-pass" minlength="4" placeholder="הזן סיסמה חדשה..."
+                            class="w-full border-2 border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-bold text-slate-950 focus:outline-none focus:border-blue-600">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-extrabold text-slate-800 mb-1">אימות סיסמה חדשה</label>
+                        <input type="password" id="recovery-confirm-pass" minlength="4" placeholder="הזן שוב לאימות..."
+                            class="w-full border-2 border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-bold text-slate-950 focus:outline-none focus:border-blue-600">
+                    </div>
+                </div>
+
+                <p id="recovery-error-msg" class="hidden text-xs font-extrabold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl p-2.5"></p>
+
+                <button type="submit" id="recovery-submit-btn" class="w-full bg-slate-900 hover:bg-slate-800 active:scale-95 text-white font-extrabold py-3.5 rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all">
+                    <i class="ph-bold ph-phone-call text-xl text-amber-400"></i>
+                    אמת מספר טלפון
+                </button>
+
+                <div class="text-center">
+                    <button type="button" id="back-to-login-btn" class="text-xs font-extrabold text-slate-600 hover:text-slate-900 underline">
+                        חזרה למסך הכניסה
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- FULLSCREEN INTERACTIVE MAP (Supports 2-Finger Rotate & Tilt) -->
+    <div id="map" class="w-full h-full absolute inset-0 z-0"></div>
+
+    <!-- CENTER CROSSHAIR (Precision placement on mobile) -->
+    <div id="center-crosshair" class="pointer-events-none fixed inset-0 z-10 flex items-center justify-center">
+        <div class="relative flex items-center justify-center crosshair-active">
+            <div class="w-11 h-11 rounded-full border-2 border-slate-950/85 bg-white/15 backdrop-blur-[1px] shadow-md flex items-center justify-center">
+                <div class="w-2.5 h-2.5 rounded-full bg-rose-600 ring-2 ring-white"></div>
+            </div>
+            <div class="absolute w-14 h-[2px] bg-slate-950/75"></div>
+            <div class="absolute h-14 w-[2px] bg-slate-950/75"></div>
+        </div>
+    </div>
+
+    <!-- TOP BAR: Unified Search (Saved Polygons/Markers + Israel Addresses) & Status -->
+    <header class="fixed top-0 inset-x-0 z-20 px-3 pt-safe md:px-4 pointer-events-none flex flex-col md:flex-row md:items-start md:justify-between gap-2">
+        
+        <!-- Search Input & Unified Results -->
+        <div class="w-full md:w-[440px] pointer-events-auto flex flex-col gap-1.5">
+            <div class="bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border-2 border-slate-300 flex items-center px-2.5 py-2 focus-within:border-blue-600 transition-all">
+                <button id="toggle-sidebar-btn" title="רשימת מתחמים וכתובות" class="p-2 text-slate-800 hover:bg-slate-100 active:scale-95 rounded-xl transition-all ml-1 relative shrink-0">
+                    <i class="ph-bold ph-list text-2xl"></i>
+                    <span id="items-badge" class="absolute -top-1 -right-1 bg-blue-600 text-white text-[11px] font-extrabold px-1.5 py-0.2 rounded-full shadow">0</span>
+                </button>
+                
+                <input type="text" id="unified-search-input" 
+                    placeholder="חפש שם מתחם שמור או כתובת בישראל..." 
+                    class="w-full bg-transparent text-slate-950 placeholder-slate-500 font-bold text-sm sm:text-base focus:outline-none px-1.5"
+                    autocomplete="off">
+                
+                <button id="clear-search-btn" class="hidden p-1.5 text-slate-400 hover:text-slate-800 rounded-lg shrink-0">
+                    <i class="ph-bold ph-x text-lg"></i>
+                </button>
+
+                <button id="search-submit-btn" class="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white p-2.5 rounded-xl font-bold shadow-sm transition-all mr-1 flex items-center justify-center shrink-0">
+                    <i class="ph-bold ph-magnifying-glass text-lg"></i>
+                </button>
+            </div>
+
+            <!-- Unified Search Dropdown (Saved Polygons first, then Israel Addresses) -->
+            <div id="search-results-dropdown" class="hidden bg-white rounded-2xl shadow-2xl border-2 border-slate-300 max-h-[60vh] overflow-y-auto divide-y divide-slate-200">
+                <!-- Dynamically populated -->
+            </div>
+        </div>
+
+        <!-- Status Pill & Mobile Compass Reset -->
+        <div class="pointer-events-auto self-end md:self-auto flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+            <!-- Center Crosshair Live Coordinates Pill (Click to copy) -->
+            <button id="center-coords-pill" title="העתק קואורדינטות מרכז הצלב" dir="ltr" class="bg-white/95 hover:bg-slate-50 active:scale-95 text-slate-900 border-2 border-slate-300 rounded-xl px-2.5 py-1.5 shadow-lg flex items-center gap-1.5 text-[11px] sm:text-xs font-mono font-extrabold transition-all">
+                <i class="ph-bold ph-crosshair text-sm sm:text-base text-rose-600 shrink-0"></i>
+                <span id="center-coords-text">31.76830, 35.21370</span>
+            </button>
+
+            <!-- Distance Measurement Tool Button (Next to Coordinates) -->
+            <button id="measure-distance-btn" title="מדידת מרחק בין נקודות במפה" class="bg-white/95 hover:bg-indigo-50 active:scale-95 text-slate-900 border-2 border-slate-300 rounded-xl px-2.5 py-1.5 shadow-lg flex items-center gap-1.5 text-xs font-extrabold transition-all">
+                <i class="ph-bold ph-ruler text-lg text-indigo-600 shrink-0"></i>
+                <span class="hidden sm:inline">מדוד מרחק</span>
+            </button>
+
+            <!-- Compass Bearing Reset Button (Rotates dynamically with map!) -->
+            <button id="compass-reset-btn" title="אפס כיוון צפון (סובב מפה עם שתי אצבעות)" class="bg-white/95 hover:bg-slate-50 active:scale-95 text-slate-900 border-2 border-slate-300 rounded-xl px-2.5 py-1.5 shadow-lg flex items-center gap-1.5 text-xs font-extrabold transition-all">
+                <i id="compass-needle-icon" class="ph-fill ph-compass text-xl text-rose-600 transition-transform duration-75"></i>
+                <span id="bearing-deg-text" class="hidden sm:inline font-mono">0°</span>
+            </button>
+
+            <!-- Lock Screen Button (Allows instant re-locking or changing password) -->
+            <button id="manual-lock-btn" title="נעל את האתר" class="bg-white/95 hover:bg-rose-50 active:scale-95 text-slate-900 hover:text-rose-700 border-2 border-slate-300 rounded-xl p-1.5 sm:px-2.5 sm:py-1.5 shadow-lg flex items-center gap-1 text-xs font-extrabold transition-all">
+                <i class="ph-bold ph-lock-simple text-lg text-slate-700"></i>
+            </button>
+
+            <!-- Cloud Sync Pill & Direct Share Link -->
+            <button id="sync-status-pill" title="העתק קישור לשיתוף עם חברים" class="bg-slate-900/95 hover:bg-slate-800 active:scale-95 text-white backdrop-blur-md px-3 py-2 rounded-xl shadow-lg border border-slate-700 flex items-center gap-2 text-xs font-bold transition-all cursor-pointer">
+                <span id="sync-dot" class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+                <span id="sync-text">מתחבר לענן...</span>
+                <i class="ph-bold ph-arrows-clockwise text-sm text-emerald-400"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- DISTANCE MEASUREMENT BANNER (Active while measuring distance) -->
+    <div id="measure-toolbar" class="hidden fixed top-24 sm:top-20 inset-x-0 z-20 px-3 pointer-events-none flex justify-center">
+        <div class="pointer-events-auto bg-slate-950 text-white border-2 border-indigo-400 rounded-2xl shadow-2xl p-3 max-w-lg w-full flex flex-col gap-2.5">
+            <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                    <span class="bg-indigo-500 text-white p-1.5 rounded-xl shrink-0">
+                        <i class="ph-bold ph-ruler text-xl"></i>
+                    </span>
+                    <div>
+                        <div class="font-extrabold text-sm leading-tight">מדידת מרחק בגרירה</div>
+                        <div class="text-[11px] text-slate-300">גע/לחץ וגרור בין שתי נקודות על המפה</div>
+                    </div>
+                </div>
+                <div id="live-measure-result" class="text-left shrink-0 bg-slate-900 px-3 py-1.5 rounded-xl border border-indigo-500/50">
+                    <div class="text-[10px] text-slate-400 font-bold">מרחק</div>
+                    <div id="measure-total-text" class="text-sm font-black text-indigo-300">0 מ'</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 text-xs font-extrabold">
+                <button id="measure-clear-btn" class="bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5">
+                    <i class="ph-bold ph-eraser text-base"></i>
+                    <span>אפס מדידה</span>
+                </button>
+                <button id="measure-close-btn" class="bg-rose-600/90 hover:bg-rose-600 active:scale-95 text-white py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5">
+                    <i class="ph-bold ph-x-circle text-base"></i>
+                    <span>סגור מדידה</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- DRAWING POLYGON BANNER (Active while drawing a polygon) -->
+    <div id="drawing-toolbar" class="hidden fixed top-20 inset-x-0 z-20 px-3 pointer-events-none flex justify-center">
+        <div class="pointer-events-auto bg-slate-950 text-white border-2 border-amber-400 rounded-2xl shadow-2xl p-3 max-w-lg w-full flex flex-col gap-2.5">
+            <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                    <span class="bg-amber-400 text-slate-950 p-1.5 rounded-xl shrink-0">
+                        <i class="ph-bold ph-polygon text-xl"></i>
+                    </span>
+                    <div>
+                        <div class="font-extrabold text-sm leading-tight">מצב שרטוט מתחם (<span id="draw-points-count">0</span> נקודות)</div>
+                        <div class="text-[11px] text-slate-300">הקש על המפה לסימון קודקודים</div>
+                    </div>
+                </div>
+                <div id="live-draw-area" class="text-left shrink-0 bg-slate-900 px-2.5 py-1 rounded-xl border border-slate-700">
+                    <div class="text-[10px] text-slate-400 font-bold">שטח משוער</div>
+                    <div class="text-xs font-extrabold text-emerald-400">0 מ"ר</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-4 gap-1.5 text-xs font-extrabold">
+                <button id="draw-add-center-btn" class="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white py-2.5 px-2 rounded-xl flex items-center justify-center gap-1">
+                    <i class="ph-bold ph-plus-circle text-base"></i>
+                    <span>בצלב</span>
+                </button>
+                <button id="draw-undo-btn" class="bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 py-2.5 px-2 rounded-xl flex items-center justify-center gap-1">
+                    <i class="ph-bold ph-arrow-u-up-left text-base"></i>
+                    <span>בטל</span>
+                </button>
+                <button id="draw-finish-btn" class="bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-slate-950 py-2.5 px-2 rounded-xl flex items-center justify-center gap-1">
+                    <i class="ph-bold ph-check-circle text-base"></i>
+                    <span>סיים</span>
+                </button>
+                <button id="draw-cancel-btn" class="bg-rose-600/90 hover:bg-rose-600 active:scale-95 text-white py-2.5 px-2 rounded-xl flex items-center justify-center gap-1">
+                    <i class="ph-bold ph-x-circle text-base"></i>
+                    <span>יציאה</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- LEFT FLOATING CONTROLS (High-Contrast Mobile Touch Targets) -->
+    <div class="fixed left-3 bottom-24 md:bottom-8 z-20 flex flex-col gap-2.5 pointer-events-auto">
+        <!-- Switch Map Mode: Street <-> Satellite -->
+        <button id="toggle-layer-btn" class="bg-white hover:bg-slate-50 active:scale-95 text-slate-950 border-2 border-slate-300 rounded-2xl p-2 shadow-xl flex flex-col items-center justify-center gap-0.5 transition-all w-16 h-14" title="החלף בין מפה ללוויין">
+            <i id="layer-icon" class="ph-bold ph-globe-hemisphere-east text-xl text-blue-600"></i>
+            <span id="layer-label" class="text-[10px] font-extrabold leading-tight text-center">לוויין</span>
+        </button>
+
+        <!-- Toggle Visibility of ALL User's Added Items (Names, Pins & Polygons) -->
+        <button id="toggle-labels-btn" class="bg-slate-900 hover:bg-slate-800 active:scale-95 text-white border-2 border-slate-700 rounded-2xl p-2 shadow-xl flex flex-col items-center justify-center gap-0.5 transition-all w-16 h-14" title="הצג/הסתר את כל ההוספות שלך מהמפה (ערים וכתובות המפה נשארים קבועים)">
+            <i id="labels-icon" class="ph-bold ph-eye text-xl text-amber-400"></i>
+            <span id="labels-btn-text" class="text-[10px] font-extrabold leading-tight">הוספות: פעיל</span>
+        </button>
+
+        <!-- GPS Locate Me -->
+        <button id="gps-locate-btn" class="bg-white hover:bg-slate-50 active:scale-95 text-slate-950 border-2 border-slate-300 rounded-2xl p-2.5 shadow-xl flex items-center justify-center transition-all w-14 h-14" title="המיקום שלי">
+            <i class="ph-bold ph-navigation-arrow text-2xl text-emerald-600"></i>
+        </button>
+
+        <!-- Desktop Zoom Controls -->
+        <div class="hidden md:flex flex-col bg-white border-2 border-slate-300 rounded-2xl shadow-xl overflow-hidden">
+            <button id="zoom-in-btn" class="p-3 hover:bg-slate-100 text-slate-900 border-b border-slate-200 flex items-center justify-center">
+                <i class="ph-bold ph-plus text-lg"></i>
+            </button>
+            <button id="zoom-out-btn" class="p-3 hover:bg-slate-100 text-slate-900 flex items-center justify-center">
+                <i class="ph-bold ph-minus text-lg"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- BOTTOM ACTION DOCK -->
+    <div id="bottom-action-dock" class="fixed bottom-0 inset-x-0 z-20 px-3 pb-safe pointer-events-none flex justify-center">
+        <div class="pointer-events-auto bg-white/95 backdrop-blur-md border-2 border-slate-300 rounded-2xl shadow-2xl p-2 flex items-center gap-1.5 sm:gap-2 max-w-lg w-full">
+            
+            <!-- Add Point at Crosshair -->
+            <button id="add-center-point-btn" class="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white py-3.5 px-2.5 rounded-xl font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md transition-all">
+                <i class="ph-bold ph-map-pin-plus text-lg sm:text-xl shrink-0"></i>
+                <span>הוסף כתובת</span>
+            </button>
+
+            <!-- Start Polygon Drawing -->
+            <button id="start-polygon-btn" class="flex-1 bg-slate-900 hover:bg-slate-800 active:scale-95 text-white py-3.5 px-2.5 rounded-xl font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md transition-all">
+                <i class="ph-bold ph-polygon text-lg sm:text-xl text-amber-400 shrink-0"></i>
+                <span>שרטט מתחם</span>
+            </button>
+
+            <!-- Mark & Share Center Location -->
+            <button id="mark-and-share-btn" class="flex-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white py-3.5 px-2.5 rounded-xl font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md transition-all">
+                <i class="ph-bold ph-paper-plane-tilt text-lg sm:text-xl shrink-0"></i>
+                <span>סמן ושלח מיקום</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- SIDEBAR DRAWER: Saved Polygons & Addresses List -->
+    <aside id="items-drawer" class="fixed inset-y-0 right-0 z-30 w-full sm:w-96 bg-white shadow-2xl border-l-2 border-slate-300 transform translate-x-full transition-transform duration-300 ease-out flex flex-col">
+        <!-- Header -->
+        <div class="p-4 pt-safe bg-slate-950 text-white flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+                <div class="bg-blue-600 p-2 rounded-xl">
+                    <i class="ph-bold ph-map-trifold text-xl"></i>
+                </div>
+                <div>
+                    <h2 class="font-extrabold text-lg leading-tight">מתחמים וכתובות שמורים</h2>
+                    <p class="text-xs text-slate-300">נשמר קבוע באתר ובמכשיר</p>
+                </div>
+            </div>
+            <button id="close-sidebar-btn" class="p-2.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-200 transition-colors">
+                <i class="ph-bold ph-x text-xl"></i>
+            </button>
+        </div>
+
+        <!-- Internal Search & Type Tabs -->
+        <div class="p-3 bg-slate-50 border-b border-slate-200 space-y-2.5">
+            <div class="relative">
+                <i class="ph-bold ph-magnifying-glass absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                <input type="text" id="saved-filter-input" placeholder="סנן לפי שם מתחם, כתובת או מלל..." 
+                    class="w-full bg-white border-2 border-slate-300 rounded-xl pr-9 pl-3 py-2 text-sm font-bold focus:outline-none focus:border-blue-600">
+            </div>
+
+            <div class="grid grid-cols-3 gap-1.5 bg-slate-200/90 p-1 rounded-xl text-xs font-extrabold">
+                <button data-filter="all" class="filter-tab-btn bg-white text-slate-950 py-1.5 rounded-lg shadow-sm transition-all">הכל (<span id="count-all">0</span>)</button>
+                <button data-filter="polygon" class="filter-tab-btn text-slate-600 hover:text-slate-950 py-1.5 rounded-lg transition-all">מתחמים (<span id="count-polygons">0</span>)</button>
+                <button data-filter="marker" class="filter-tab-btn text-slate-600 hover:text-slate-950 py-1.5 rounded-lg transition-all">כתובות (<span id="count-markers">0</span>)</button>
+            </div>
+        </div>
+
+        <!-- List Items -->
+        <div id="saved-items-list" class="flex-1 overflow-y-auto p-3 space-y-2.5 bg-slate-100/70">
+            <div id="empty-list-state" class="text-center py-12 px-4">
+                <div class="w-16 h-16 bg-slate-200 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <i class="ph-bold ph-polygon text-3xl"></i>
+                </div>
+                <h3 class="font-extrabold text-slate-800 text-base">עדיין לא נשמרו מתחמים או כתובות</h3>
+                <p class="text-xs text-slate-600 mt-1 leading-relaxed">לחץ על "שרטט מתחם" כדי לתחום אזור, לתת לו שם שיופיע קבוע על המפה, ולשמור עליו מלל.</p>
+            </div>
+        </div>
+
+        <!-- Backup Export / Import -->
+        <div class="p-3 pb-safe bg-white border-t border-slate-200 flex items-center justify-between gap-2">
+            <button id="export-json-btn" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-900 py-2.5 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 border border-slate-300 transition-colors">
+                <i class="ph-bold ph-download-simple text-base text-blue-600"></i>
+                ייצוא גיבוי
+            </button>
+            <label class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-900 py-2.5 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 border border-slate-300 cursor-pointer transition-colors">
+                <i class="ph-bold ph-upload-simple text-base text-emerald-600"></i>
+                ייבוא קובץ
+                <input type="file" id="import-json-input" accept=".json" class="hidden">
+            </label>
+        </div>
+    </aside>
+
+    <!-- MODAL: Add / Edit Polygon Name, Address & Permanent Text -->
+    <div id="editor-modal" class="hidden fixed inset-0 z-40 bg-slate-950/65 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl border-2 border-slate-300 overflow-hidden flex flex-col max-h-[92dvh]">
+            
+            <!-- Modal Header -->
+            <div class="px-5 py-4 bg-slate-950 text-white flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                    <span id="modal-type-icon" class="bg-blue-600 p-2 rounded-xl">
+                        <i class="ph-bold ph-polygon text-xl"></i>
+                    </span>
+                    <div>
+                        <h3 id="modal-title" class="font-extrabold text-lg">הגדרת שם ומלל למתחם</h3>
+                        <p id="modal-subtitle" class="text-xs text-slate-300">השם יוצג קבוע על המפה ובחיפוש</p>
+                    </div>
+                </div>
+                <button id="close-editor-modal-btn" class="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300">
+                    <i class="ph-bold ph-x text-lg"></i>
+                </button>
+            </div>
+
+            <!-- Form -->
+            <form id="editor-form" class="p-5 pb-safe overflow-y-auto space-y-4">
+                <input type="hidden" id="edit-item-id">
+                <input type="hidden" id="edit-item-type">
+
+                <!-- Polygon Area Metrics -->
+                <div id="modal-polygon-stats" class="hidden bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-3 flex items-center justify-around text-center">
+                    <div>
+                        <span class="text-[11px] font-extrabold text-emerald-800 block">שטח במ"ר</span>
+                        <span id="stat-sqm" class="text-base font-black text-emerald-950">0</span>
+                    </div>
+                    <div class="h-8 w-[1px] bg-emerald-300"></div>
+                    <div>
+                        <span class="text-[11px] font-extrabold text-emerald-800 block">שטח בדונם</span>
+                        <span id="stat-dunam" class="text-base font-black text-emerald-950">0</span>
+                    </div>
+                    <div class="h-8 w-[1px] bg-emerald-300"></div>
+                    <div>
+                        <span class="text-[11px] font-extrabold text-emerald-800 block">היקף (מטר)</span>
+                        <span id="stat-perimeter" class="text-base font-black text-emerald-950">0</span>
+                    </div>
+                </div>
+
+                <!-- Polygon Name / Title (Prominent & Required) -->
+                <div>
+                    <label id="title-field-label" class="block text-sm font-extrabold text-slate-900 mb-1">שם המתחם (יוצג קבוע על המפה ובחיפוש) *</label>
+                    <input type="text" id="edit-title" required placeholder="לדוגמה: מתחם מרכזי / חלקה 12 / גן העיר"
+                        class="w-full border-2 border-slate-300 rounded-xl px-3.5 py-2.5 text-base font-extrabold text-slate-950 focus:outline-none focus:border-blue-600 bg-amber-50/40">
+                </div>
+
+                <!-- Address Field (For Markers or Optional for Polygons) -->
+                <div id="address-field-group">
+                    <div class="flex items-center justify-between mb-1">
+                        <label class="block text-sm font-extrabold text-slate-800">כתובת / מיקום</label>
+                        <button type="button" id="reverse-geocode-btn" class="text-xs font-extrabold text-blue-600 hover:underline flex items-center gap-1">
+                            <i class="ph-bold ph-magic-wand"></i>
+                            אתר כתובת אוטומטית
+                        </button>
+                    </div>
+                    <input type="text" id="edit-address" placeholder="עיר, רחוב ומספר בית..."
+                        class="w-full border-2 border-slate-300 rounded-xl px-3.5 py-2 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-600">
+                </div>
+
+                <!-- Color & Icon -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-sm font-extrabold text-slate-800 mb-1.5">צבע המתחם / הסימון</label>
+                        <div id="color-swatches" class="flex items-center gap-2 flex-wrap">
+                            <!-- Swatches injected by JS -->
+                        </div>
+                    </div>
+
+                    <div id="icon-picker-group">
+                        <label class="block text-sm font-extrabold text-slate-800 mb-1.5">אייקון סיכה</label>
+                        <select id="edit-icon" class="w-full border-2 border-slate-300 rounded-xl px-3 py-2 text-sm font-bold text-slate-900 bg-white focus:outline-none focus:border-blue-600">
+                            <option value="map-pin">📍 סיכה כללית</option>
+                            <option value="buildings">🏢 בניין / נכס</option>
+                            <option value="house">🏠 בית / מגורים</option>
+                            <option value="storefront">🏪 עסק / חנות</option>
+                            <option value="tree">🌳 שטח פתוח / פארק</option>
+                            <option value="warning">⚠️ נקודת תשומת לב</option>
+                            <option value="flag">🚩 יעד חשוב</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Permanent Rich Notes -->
+                <div>
+                    <label class="block text-sm font-extrabold text-slate-900 mb-1">מלל קבוע על המתחם / הכתובת</label>
+                    <textarea id="edit-notes" rows="4" placeholder="הזן כאן מידע קבוע שיישמר באתר ויוצג בכל לחיצה על המתחם (לדוגמה: פרטי קשר, ייעוד השטח, הנחיות כניסה...)"
+                        class="w-full border-2 border-slate-300 rounded-xl p-3 text-sm font-medium text-slate-950 focus:outline-none focus:border-blue-600 leading-relaxed"></textarea>
+                </div>
+
+                <!-- Submit / Cancel -->
+                <div class="pt-2 flex items-center gap-2.5">
+                    <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all">
+                        <i class="ph-bold ph-floppy-disk text-xl"></i>
+                        שמור קבוע באתר
+                    </button>
+                    <button type="button" id="cancel-editor-btn" class="bg-slate-200 hover:bg-slate-300 text-slate-900 font-extrabold py-3.5 px-4 rounded-xl transition-colors">
+                        ביטול
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: Item Details Card -->
+    <div id="details-modal" class="hidden fixed inset-0 z-40 bg-slate-950/55 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl border-2 border-slate-300 overflow-hidden flex flex-col max-h-[88dvh]">
+            <!-- Header -->
+            <div id="details-header-bar" class="p-4 text-white flex items-start justify-between gap-3 bg-blue-600">
+                <div class="flex items-start gap-3">
+                    <div class="bg-white/20 p-2.5 rounded-xl backdrop-blur-sm mt-0.5 shrink-0">
+                        <i id="details-icon" class="ph-bold ph-polygon text-2xl"></i>
+                    </div>
+                    <div>
+                        <span id="details-badge" class="inline-block text-[11px] font-extrabold uppercase tracking-wider bg-black/25 px-2 py-0.5 rounded-md mb-1">מתחם שמור</span>
+                        <h3 id="details-title" class="font-black text-xl leading-snug">שם המתחם</h3>
+                        <p id="details-address" class="text-xs text-white/95 mt-0.5 font-bold"></p>
+                    </div>
+                </div>
+                <button id="close-details-btn" class="p-2 bg-black/25 hover:bg-black/35 rounded-xl text-white transition-colors shrink-0">
+                    <i class="ph-bold ph-x text-lg"></i>
+                </button>
+            </div>
+
+            <!-- Body -->
+            <div class="p-5 pb-safe overflow-y-auto space-y-4">
+                <!-- Polygon Metrics -->
+                <div id="details-polygon-metrics" class="hidden grid grid-cols-3 gap-2 bg-slate-100 p-3 rounded-2xl border border-slate-200 text-center">
+                    <div>
+                        <span class="text-[11px] text-slate-600 font-extrabold block">שטח (מ"ר)</span>
+                        <span id="det-sqm" class="text-sm font-black text-slate-950">0</span>
+                    </div>
+                    <div>
+                        <span class="text-[11px] text-slate-600 font-extrabold block">דונם</span>
+                        <span id="det-dunam" class="text-sm font-black text-slate-950">0</span>
+                    </div>
+                    <div>
+                        <span class="text-[11px] text-slate-600 font-extrabold block">היקף (מ')</span>
+                        <span id="det-perim" class="text-sm font-black text-slate-950">0</span>
+                    </div>
+                </div>
+
+                <!-- Permanent Text -->
+                <div>
+                    <h4 class="text-xs font-extrabold text-slate-600 uppercase mb-1.5 flex items-center gap-1">
+                        <i class="ph-bold ph-note-pencil text-blue-600"></i>
+                        מלל קבוע על המתחם / המקום:
+                    </h4>
+                    <div id="details-notes-box" class="bg-amber-50/80 border-2 border-amber-200 rounded-2xl p-4 text-slate-950 text-sm font-bold whitespace-pre-wrap leading-relaxed min-h-[85px]">
+                        אין מלל נוסף.
+                    </div>
+                </div>
+
+                <!-- Timestamp & Copy -->
+                <div class="flex items-center justify-between text-[11px] text-slate-600 font-bold pt-1 border-t border-slate-200">
+                    <span id="details-updated">עודכן לאחרונה</span>
+                    <button id="copy-coords-btn" class="text-blue-600 hover:underline font-extrabold flex items-center gap-1">
+                        <i class="ph-bold ph-copy"></i>
+                        העתק קואורדינטות
+                    </button>
+                </div>
+
+                <!-- Direct Navigation Buttons (Waze & Google Maps) -->
+                <div class="grid grid-cols-2 gap-2 pt-1">
+                    <a id="details-waze-nav-btn" href="#" target="_blank" rel="noopener noreferrer"
+                        class="bg-[#33ccff] hover:bg-[#19c2fa] active:scale-95 text-slate-950 font-black py-3 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow transition-all text-xs sm:text-sm">
+                        <i class="ph-fill ph-car text-lg"></i>
+                        <span>ניווט ב-Waze</span>
+                    </a>
+                    <a id="details-gmaps-nav-btn" href="#" target="_blank" rel="noopener noreferrer"
+                        class="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black py-3 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow transition-all text-xs sm:text-sm">
+                        <i class="ph-fill ph-map-pin-line text-lg"></i>
+                        <span>Google Maps</span>
+                    </a>
+                </div>
+
+                <!-- Actions -->
+                <div class="flex items-center gap-2 pt-1">
+                    <button id="details-zoom-btn" class="bg-blue-100 hover:bg-blue-200 active:scale-95 text-blue-900 font-extrabold py-3.5 px-3 rounded-xl flex items-center justify-center gap-1 transition-all" title="התקרב למתחם במפה">
+                        <i class="ph-bold ph-magnifying-glass-plus text-lg"></i>
+                        <span class="text-xs sm:text-sm">התקרב</span>
+                    </button>
+                    <button id="details-share-loc-btn" class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold py-3.5 px-3 rounded-xl flex items-center justify-center gap-1 shadow transition-all" title="שלח מיקום">
+                        <i class="ph-bold ph-paper-plane-tilt text-lg"></i>
+                        <span class="text-xs sm:text-sm">שלח</span>
+                    </button>
+                    <button id="details-edit-btn" class="flex-1 bg-slate-950 hover:bg-slate-800 active:scale-95 text-white font-extrabold py-3.5 px-3 rounded-xl flex items-center justify-center gap-1 shadow transition-all">
+                        <i class="ph-bold ph-pencil-simple text-lg text-amber-400"></i>
+                        <span class="text-xs sm:text-sm">ערוך</span>
+                    </button>
+                    <button id="details-delete-btn" class="bg-rose-100 hover:bg-rose-600 text-rose-700 hover:text-white font-extrabold py-3.5 px-3 rounded-xl flex items-center justify-center transition-colors" title="מחק">
+                        <i class="ph-bold ph-trash text-lg"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SHARE LOCATION MODAL (WhatsApp / Copy Direct Map Link) -->
+    <div id="share-location-modal" class="hidden fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl border-2 border-slate-300 overflow-hidden flex flex-col">
+            <div class="px-5 py-4 bg-emerald-700 text-white flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                    <span class="bg-white/20 p-2 rounded-xl">
+                        <i class="ph-bold ph-map-pin-line text-xl"></i>
+                    </span>
+                    <div>
+                        <h3 class="font-extrabold text-lg">מיקום סומן ומוכן לשליחה</h3>
+                        <p id="share-loc-coords-label" dir="ltr" class="text-xs text-emerald-100 font-mono font-bold text-right">31.76830, 35.21370</p>
+                    </div>
+                </div>
+                <button id="close-share-loc-btn" class="p-2 bg-black/20 hover:bg-black/30 rounded-xl text-white">
+                    <i class="ph-bold ph-x text-lg"></i>
+                </button>
+            </div>
+
+            <div class="p-5 pb-safe space-y-3.5">
+                <div>
+                    <label class="block text-xs font-extrabold text-slate-700 mb-1">תיאור המיקום לשליחה (אופציונלי)</label>
+                    <input type="text" id="share-loc-note-input" placeholder="לדוגמה: נקודת מפגש / כניסה ראשית"
+                        class="w-full border-2 border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-bold text-slate-950 focus:outline-none focus:border-emerald-600">
+                </div>
+
+                <div class="grid grid-cols-1 gap-2.5 pt-1">
+                    <a id="share-whatsapp-link" href="#" target="_blank" rel="noopener noreferrer"
+                        class="w-full bg-[#25D366] hover:bg-[#1ebe5d] active:scale-95 text-slate-950 font-black py-3.5 px-4 rounded-xl shadow-lg flex items-center justify-center gap-2 text-base transition-all">
+                        <i class="ph-fill ph-whatsapp-logo text-2xl"></i>
+                        שלח מיקום בוואטסאפ
+                    </a>
+
+                    <button type="button" id="copy-shared-loc-btn"
+                        class="w-full bg-slate-900 hover:bg-slate-800 active:scale-95 text-white font-extrabold py-3.5 px-4 rounded-xl shadow flex items-center justify-center gap-2 text-sm transition-all">
+                        <i class="ph-bold ph-copy text-lg text-emerald-400"></i>
+                        העתק הודעה וקישור מפה
+                    </button>
+
+                    <button type="button" id="save-shared-loc-permanent-btn"
+                        class="w-full bg-blue-50 hover:bg-blue-100 border-2 border-blue-200 text-blue-800 font-extrabold py-3 px-4 rounded-xl flex items-center justify-center gap-2 text-xs transition-all">
+                        <i class="ph-bold ph-floppy-disk text-base"></i>
+                        שמור מיקום זה גם קבוע במפה
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CUSTOM CONFIRMATION MODAL -->
+    <div id="confirm-modal" class="hidden fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl shadow-2xl border-2 border-slate-300 max-w-sm w-full p-5 text-center space-y-4">
+            <div class="w-14 h-14 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto">
+                <i class="ph-bold ph-warning-circle text-3xl"></i>
+            </div>
+            <div>
+                <h3 id="confirm-title" class="font-black text-lg text-slate-950">מחיקת פריט</h3>
+                <p id="confirm-message" class="text-sm font-medium text-slate-600 mt-1">האם למחוק פריט זה לצמיתות?</p>
+            </div>
+            <div class="flex items-center gap-2.5">
+                <button id="confirm-yes-btn" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-extrabold py-3 rounded-xl transition-colors">
+                    כן, מחק
+                </button>
+                <button id="confirm-no-btn" class="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-900 font-extrabold py-3 rounded-xl transition-colors">
+                    ביטול
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SHARED TEAM SYNC MODAL (One-time setup for permanent live sync across all phones) -->
+    <div id="sync-modal" style="display: none; z-index: 9999;" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl border-2 border-slate-300 overflow-hidden flex flex-col max-h-[90dvh] relative z-10">
+            <div class="px-5 py-4 bg-slate-950 text-white flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                    <span class="bg-emerald-500 text-slate-950 p-2 rounded-xl">
+                        <i class="ph-bold ph-arrows-clockwise text-xl"></i>
+                    </span>
+                    <div>
+                        <h3 class="font-extrabold text-lg">סנכרון ושיתוף לכל הפלאפונים</h3>
+                        <p class="text-xs text-slate-300">עובד באופן מלא גם בגוגל כרום בנייד</p>
+                    </div>
+                </div>
+                <button type="button" id="close-sync-modal-btn" class="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300">
+                    <i class="ph-bold ph-x text-lg"></i>
+                </button>
+            </div>
+
+            <div class="p-5 pb-safe overflow-y-auto space-y-4">
+                <div id="sync-status-explanation" class="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-4 text-sm text-slate-800 space-y-2 leading-relaxed">
+                    <p class="font-black text-emerald-950">סנכרון אוטומטי בזמן אמת</p>
+                    <p>כל כתובת או מתחם שתשמור אצלך יופיעו מיד אצל כל מי שנמצא בקישור.</p>
+                </div>
+
+                <!-- One-time Cloud DB Setup (Always accessible in Chrome mobile so user can connect/update anytime) -->
+                <div id="external-cloud-setup-box" class="bg-slate-50 border-2 border-slate-300 rounded-2xl p-4 space-y-3">
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm font-black text-slate-950">חיבור ענן חי (לסנכרון אוטומטי בכרום)</span>
+                        <span id="cloud-conn-badge" class="text-[11px] font-extrabold px-2 py-0.5 rounded bg-amber-100 text-amber-900">ממתין לחיבור</span>
+                    </div>
+                    <ol class="text-xs text-slate-700 space-y-1.5 list-decimal list-inside leading-relaxed font-medium">
+                        <li>כדי שכל הפלאפונים שנכנסים לקישור בגוגל כרום יראו מיד כל כתובת שתשמור (בלי לשלוח שוב קישור), הדבק כאן פעם אחת את פרטי מסד הנתונים החינמי (<code>firebaseConfig</code>).</li>
+                        <li>לחץ <b>"הפעל סנכרון חי"</b> ושתף את הקישור פעם אחת בלבד.</li>
+                    </ol>
+                    <textarea id="custom-fb-config-input" rows="3" dir="ltr" placeholder='{"apiKey":"...","authDomain":"...","projectId":"..."}'
+                        class="w-full border-2 border-slate-300 rounded-xl p-2.5 text-xs font-mono bg-white focus:outline-none focus:border-blue-600"></textarea>
+                    <button type="button" id="save-custom-fb-config-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3 px-4 rounded-xl text-sm shadow transition-all">
+                        הפעל סנכרון חי לכל הפלאפונים
+                    </button>
+                </div>
+
+                <div class="space-y-2">
+                    <button type="button" id="share-invite-link-btn" class="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-lg flex items-center justify-center gap-2 text-sm sm:text-base transition-all">
+                        <i class="ph-bold ph-link text-xl"></i>
+                        העתק קישור קבוע מסונכרן לכרום
+                    </button>
+
+                    <button type="button" id="share-snapshot-link-btn" class="w-full bg-slate-900 hover:bg-slate-800 active:scale-95 text-white font-extrabold py-3 px-4 rounded-xl shadow flex items-center justify-center gap-2 text-xs sm:text-sm transition-all">
+                        <i class="ph-bold ph-export text-lg text-amber-400"></i>
+                        העתק קישור הכולל בתוכו את כל הכתובות השמורות
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TOAST NOTIFICATION -->
+    <div id="toast-notification" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none opacity-0 transition-opacity duration-300 w-max max-w-[90vw]">
+        <div class="bg-slate-950 text-white px-4 py-2.5 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-2 text-xs sm:text-sm font-extrabold">
+            <i id="toast-icon" class="ph-bold ph-check-circle text-emerald-400 text-lg shrink-0"></i>
+            <span id="toast-message">הפעולה בוצעה בהצלחה</span>
+        </div>
+    </div>
+
+    <!-- MapLibre GL & Safe Cloud Storage Logic -->
+    <script>
+        // ==========================================
+        // 1. CONFIGURATION & GLOBAL STATE
+        // ==========================================
+        const DEFAULT_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyBoPjg-xe22aybo9nSmtH0SM2cPfy8XM6U",
+            authDomain: "mormaps-1071.firebaseapp.com",
+            projectId: "mormaps-1071",
+            storageBucket: "mormaps-1071.firebasestorage.app",
+            messagingSenderId: "237003719337",
+            appId: "1:237003719337:web:5ca919e1365a8ac8f71fb8",
+            measurementId: "G-EF56Y8FSD3"
+        };
+
+        const LOCAL_STORAGE_KEY = 'israel_map_saved_items_v1';
+        const CUSTOM_CLOUD_CFG_KEY = 'israel_map_custom_fb_cfg_v1';
+        const LOCAL_PASS_KEY = 'israel_map_access_password_v1';
+        const RECOVERY_PHONE_CANONICAL = '0539227598';
+
+        const PALETTE_COLORS = [
+            '#2563eb', '#d97706', '#059669', '#dc2626',
+            '#7c3aed', '#0891b2', '#db2777', '#0f172a'
+        ];
+
+        const urlHashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+        const appId = urlHashParams.get('room') || 'israel-shared-map-v1';
+
+        let firebaseConfig = { ...DEFAULT_FIREBASE_CONFIG };
+        try {
+            const hashCfg = urlHashParams.get('cfg');
+            if (hashCfg) {
+                firebaseConfig = JSON.parse(decodeURIComponent(escape(atob(hashCfg))));
+            } else {
+                const storedCfg = localStorage.getItem(CUSTOM_CLOUD_CFG_KEY);
+                if (storedCfg) firebaseConfig = JSON.parse(storedCfg);
+            }
+        } catch (e) {}
+
+        let cloudPasswordHash = localStorage.getItem(LOCAL_PASS_KEY) || '';
+
+        const state = {
+            items: [],
+            cloudReady: false,
+            mapMode: 'street',
+            showPermanentLabels: true,
+            highlightedItemId: null,
+            isDrawing: false,
+            drawPoints: [],
+            isMeasuring: false,
+            isDraggingMeasure: false,
+            measureStart: null,
+            measureEnd: null,
+            selectedColor: '#2563eb',
+            pendingCoords: null,
+            pendingPolygonPoints: null,
+            activeItem: null,
+            searchFilterText: '',
+            currentFilter: 'all',
+            confirmCallback: null
+        };
+
+        let map = null;
+        let mapLoaded = false;
+        const savedMarkersMap = new Map();
+        let drawVertexMarkers = [];
+        let measureLabelMarker = null;
+        let gpsMarker = null;
+        let tempSearchMarker = null;
+        let sharedPinMarker = null;
+        let currentSharedLocation = null;
+
+        // ==========================================
+        // 2. GEOMETRY & DISTANCE HELPERS
+        // ==========================================
+        function haversineDistance(p1, p2) {
+            const R = 6371000;
+            const toRad = d => (d * Math.PI) / 180;
+            const dLat = toRad(p2.lat - p1.lat);
+            const dLng = toRad(p2.lng - p1.lng);
+            const a = Math.sin(dLat / 2) ** 2 +
+                      Math.cos(toRad(p1.lat)) * Math.cos(toRad(p2.lat)) * Math.sin(dLng / 2) ** 2;
+            return 2 * R * Math.asin(Math.sqrt(a));
+        }
+
+        function formatDistanceHebrew(meters) {
+            if (meters < 1000) return `${Math.round(meters).toLocaleString()} מ'`;
+            return `${(meters / 1000).toFixed(2)} ק"מ`;
+        }
+
+        function getPolygonCenter(pts) {
+            if (!Array.isArray(pts) || pts.length === 0) return { lat: 31.7683, lng: 35.2137 };
+            let sumLat = 0, sumLng = 0;
+            pts.forEach(p => { sumLat += p.lat; sumLng += p.lng; });
+            return { lat: sumLat / pts.length, lng: sumLng / pts.length };
+        }
+
+        function calculatePolygonMetrics(pts) {
+            if (!Array.isArray(pts) || pts.length < 3) return { sqm: 0, dunam: 0, perimeter: 0 };
+            let perimeter = 0;
+            for (let i = 0; i < pts.length; i++) {
+                perimeter += haversineDistance(pts[i], pts[(i + 1) % pts.length]);
+            }
+            const refLat = pts[0].lat;
+            const mPerDegLat = 111132.92;
+            const mPerDegLng = 111412.84 * Math.cos((refLat * Math.PI) / 180);
+            let area = 0;
+            for (let i = 0; i < pts.length; i++) {
+                const j = (i + 1) % pts.length;
+                const x1 = pts[i].lng * mPerDegLng;
+                const y1 = pts[i].lat * mPerDegLat;
+                const x2 = pts[j].lng * mPerDegLng;
+                const y2 = pts[j].lat * mPerDegLat;
+                area += (x1 * y2 - x2 * y1);
+            }
+            const sqm = Math.round(Math.abs(area) / 2);
+            const dunam = Number((sqm / 1000).toFixed(2));
+            return { sqm, dunam, perimeter: Math.round(perimeter) };
+        }
+
+        // ==========================================
+        // 2B. ACCESS GATE / PASSWORD LOCK SCREEN
+        // ==========================================
+        function initAuthLockScreen() {
+            const gate = document.getElementById('auth-lock-screen');
+            const setupForm = document.getElementById('setup-password-form');
+            const loginForm = document.getElementById('login-password-form');
+            const recoveryForm = document.getElementById('recovery-password-form');
+            const titleEl = document.getElementById('lock-screen-title');
+            const subEl = document.getElementById('lock-screen-subtitle');
+
+            let recoveryPhoneVerified = false;
+
+            function unlockGate() {
+                gate.classList.add('hidden');
+                gate.style.display = 'none';
+                forceSyncFromCloud(false);
+            }
+
+            function refreshLockView() {
+                if (gate.style.display === 'none' || gate.classList.contains('hidden')) return;
+                if (!recoveryForm.classList.contains('hidden')) return;
+
+                if (!cloudPasswordHash) {
+                    setupForm.classList.remove('hidden');
+                    loginForm.classList.add('hidden');
+                    titleEl.textContent = 'הגדרת סיסמת כניסה';
+                    subEl.textContent = 'הגדר סיסמה חד-פעמית לאבטחת האתר';
+                } else {
+                    setupForm.classList.add('hidden');
+                    loginForm.classList.remove('hidden');
+                    titleEl.textContent = 'גישה מוגנת בסיסמה';
+                    subEl.textContent = 'הזן את סיסמת הכניסה לאתר המפות';
+                }
+            }
+
+            window.__refreshLockScreenView = refreshLockView;
+            refreshLockView();
+
+            document.getElementById('toggle-login-pass-vis').addEventListener('click', () => {
+                const inp = document.getElementById('login-pass-input');
+                inp.type = inp.type === 'password' ? 'text' : 'password';
+            });
+
+            setupForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const p1 = document.getElementById('setup-pass-input').value.trim();
+                const p2 = document.getElementById('setup-pass-confirm').value.trim();
+                const errEl = document.getElementById('setup-error-msg');
+                if (p1.length < 4 || p1 !== p2) {
+                    errEl.textContent = p1 !== p2 ? 'הסיסמאות אינן תואמות' : 'הסיסמה חייבת להכיל לפחות 4 תווים';
+                    errEl.classList.remove('hidden');
+                    return;
+                }
+                errEl.classList.add('hidden');
+                cloudPasswordHash = p1;
+                localStorage.setItem(LOCAL_PASS_KEY, p1);
+                savePasswordToCloud(p1);
+                unlockGate();
+            });
+
+            loginForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const entered = document.getElementById('login-pass-input').value.trim();
+                const digitsOnly = entered.replace(/\D/g, '');
+                const errEl = document.getElementById('login-error-msg');
+
+                if (entered === cloudPasswordHash || digitsOnly === RECOVERY_PHONE_CANONICAL) {
+                    errEl.classList.add('hidden');
+                    document.getElementById('login-pass-input').value = '';
+                    unlockGate();
+                } else {
+                    errEl.textContent = 'סיסמה שגויה. נסה שוב או לחץ על "שכחתי סיסמה".';
+                    errEl.classList.remove('hidden');
+                }
+            });
+
+            document.getElementById('open-recovery-btn').addEventListener('click', () => {
+                recoveryPhoneVerified = false;
+                document.getElementById('recovery-new-pass-section').classList.add('hidden');
+                document.getElementById('recovery-error-msg').classList.add('hidden');
+                document.getElementById('recovery-submit-btn').innerHTML = '<i class="ph-bold ph-phone-call text-xl text-amber-400"></i> אמת מספר טלפון';
+                loginForm.classList.add('hidden');
+                setupForm.classList.add('hidden');
+                recoveryForm.classList.remove('hidden');
+                titleEl.textContent = 'שחזור ואיפוס סיסמה';
+                subEl.textContent = 'אימות באמצעות מספר הטלפון של מנהל האתר';
+            });
+
+            document.getElementById('back-to-login-btn').addEventListener('click', () => {
+                recoveryForm.classList.add('hidden');
+                refreshLockView();
+            });
+
+            recoveryForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const errEl = document.getElementById('recovery-error-msg');
+                const phoneDigits = document.getElementById('recovery-phone-input').value.replace(/\D/g, '');
+
+                if (!recoveryPhoneVerified) {
+                    if (phoneDigits !== RECOVERY_PHONE_CANONICAL) {
+                        errEl.textContent = 'מספר הטלפון שהוזן אינו מורשה לשחזור סיסמה.';
+                        errEl.classList.remove('hidden');
+                        return;
+                    }
+                    errEl.classList.add('hidden');
+                    recoveryPhoneVerified = true;
+                    document.getElementById('recovery-new-pass-section').classList.remove('hidden');
+                    document.getElementById('recovery-submit-btn').innerHTML = '<i class="ph-bold ph-shield-check text-xl text-emerald-400"></i> שמור סיסמה חדשה והיכנס';
+                    return;
+                }
+
+                const np1 = document.getElementById('recovery-new-pass').value.trim();
+                const np2 = document.getElementById('recovery-confirm-pass').value.trim();
+                if (np1.length < 4 || np1 !== np2) {
+                    errEl.textContent = np1 !== np2 ? 'הסיסמאות החדשות אינן תואמות' : 'יש להזין לפחות 4 תווים';
+                    errEl.classList.remove('hidden');
+                    return;
+                }
+                errEl.classList.add('hidden');
+                cloudPasswordHash = np1;
+                localStorage.setItem(LOCAL_PASS_KEY, np1);
+                savePasswordToCloud(np1);
+                recoveryForm.classList.add('hidden');
+                unlockGate();
+            });
+
+            document.getElementById('manual-lock-btn').addEventListener('click', () => {
+                gate.classList.remove('hidden');
+                gate.style.display = 'flex';
+                refreshLockView();
+            });
+        }
+
+        // ==========================================
+        // 3. CLOUD & LOCAL PERSISTENCE (OFFICIAL REAL-TIME FIRESTORE SYNC)
+        // ==========================================
+        let db = null;
+        let fsMod = null;
+        let unsubscribeCloud = null;
+
+        function loadLocalItems() {
+            try {
+                const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed)) {
+                        state.items = parsed.filter(it => it && it.id && !it.deleted);
+                    }
+                }
+            } catch (e) {}
+            renderAll();
+        }
+
+        function saveLocalItems() {
+            try {
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state.items));
+            } catch (e) {}
+        }
+
+        function updateSyncBadge(connected, labelText) {
+            const dot = document.getElementById('sync-dot');
+            const text = document.getElementById('sync-text');
+            if (!dot || !text) return;
+            if (connected) {
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+                text.textContent = labelText || 'משותף לכולם בענן';
+            } else {
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse';
+                text.textContent = labelText || 'נשמר מקומית (לחץ לסנכרון)';
+            }
+        }
+
+        async function savePasswordToCloud(passStr) {
+            if (!db || !fsMod) return;
+            try {
+                const { doc, setDoc } = fsMod;
+                await setDoc(doc(db, 'israel_map_items', 'site_security_config'), {
+                    password: passStr,
+                    updatedAt: Date.now()
+                });
+            } catch (e) {}
+        }
+
+        async function initCloudStorage() {
+            loadLocalItems();
+            if (!firebaseConfig || !firebaseConfig.projectId) {
+                updateSyncBadge(false, 'נשמר מקומית');
+                return;
+            }
+
+            try {
+                const appMod = await import('https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js');
+                fsMod = await import('https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js');
+
+                const appName = 'mormaps_live_' + firebaseConfig.projectId;
+                const existingApps = appMod.getApps();
+                const fbApp = existingApps.find(a => a.name === appName) || appMod.initializeApp(firebaseConfig, appName);
+                db = fsMod.getFirestore(fbApp);
+
+                if (unsubscribeCloud) {
+                    unsubscribeCloud();
+                    unsubscribeCloud = null;
+                }
+
+                const colRef = fsMod.collection(db, 'israel_map_items');
+                unsubscribeCloud = fsMod.onSnapshot(colRef, (snapshot) => {
+                    state.cloudReady = true;
+                    updateSyncBadge(true, 'משותף לכולם בענן');
+
+                    const nextItems = [];
+                    snapshot.forEach((docSnap) => {
+                        const docId = docSnap.id;
+                        const data = docSnap.data();
+                        if (!data) return;
+
+                        if (docId === 'site_security_config' && data.password) {
+                            cloudPasswordHash = String(data.password).trim();
+                            localStorage.setItem(LOCAL_PASS_KEY, cloudPasswordHash);
+                            if (window.__refreshLockScreenView) window.__refreshLockScreenView();
+                            return;
+                        }
+
+                        if (docId === 'deleted_items_registry') return;
+
+                        if (data.id && !data.deleted) {
+                            nextItems.push(data);
+                        }
+                    });
+
+                    nextItems.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+                    state.items = nextItems;
+                    saveLocalItems();
+                    renderAll();
+                }, (err) => {
+                    console.warn('Firestore snapshot error:', err);
+                    state.cloudReady = false;
+                    updateSyncBadge(false, 'נשמר מקומית (לחץ לסנכרון)');
+                });
+            } catch (e) {
+                console.warn('Firebase init error:', e);
+                state.cloudReady = false;
+                updateSyncBadge(false, 'נשמר מקומית (לחץ לסנכרון)');
+            }
+        }
+
+        async function forceSyncFromCloud(notify = true) {
+            if (!db || !fsMod) {
+                await initCloudStorage();
+                return;
+            }
+            try {
+                const colRef = fsMod.collection(db, 'israel_map_items');
+                const snapshot = await fsMod.getDocs(colRef);
+                state.cloudReady = true;
+                updateSyncBadge(true, 'משותף לכולם בענן');
+
+                const nextItems = [];
+                snapshot.forEach((docSnap) => {
+                    const docId = docSnap.id;
+                    const data = docSnap.data();
+                    if (!data) return;
+                    if (docId === 'site_security_config' && data.password) {
+                        cloudPasswordHash = String(data.password).trim();
+                        localStorage.setItem(LOCAL_PASS_KEY, cloudPasswordHash);
+                        if (window.__refreshLockScreenView) window.__refreshLockScreenView();
+                        return;
+                    }
+                    if (docId === 'deleted_items_registry') return;
+                    if (data.id && !data.deleted) {
+                        nextItems.push(data);
+                    }
+                });
+
+                nextItems.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+                state.items = nextItems;
+                saveLocalItems();
+                renderAll();
+                if (notify) showToast(`סונכרנו ${state.items.length} כתובות ומתחמים מהענן!`);
+            } catch (e) {
+                if (notify) showToast('שגיאת תקשורת בעת רענון מהענן', 'warning');
+            }
+        }
+
+        async function persistItem(item) {
+            const idx = state.items.findIndex(i => i.id === item.id);
+            if (idx >= 0) {
+                state.items[idx] = item;
+            } else {
+                state.items.unshift(item);
+            }
+            saveLocalItems();
+            renderAll();
+
+            if (db && fsMod) {
+                try {
+                    const { doc, setDoc } = fsMod;
+                    await setDoc(doc(db, 'israel_map_items', item.id), item);
+                    state.cloudReady = true;
+                    updateSyncBadge(true, 'משותף לכולם בענן');
+                } catch (e) {
+                    console.warn('Save to cloud failed:', e);
+                    showToast('נשמר מקומית (בדוק חיבור לענן)', 'warning');
+                }
+            }
+        }
+
+        async function removeItem(itemId) {
+            state.items = state.items.filter(i => i.id !== itemId);
+            saveLocalItems();
+            renderAll();
+
+            if (db && fsMod) {
+                try {
+                    const { doc, deleteDoc } = fsMod;
+                    await deleteDoc(doc(db, 'israel_map_items', itemId));
+                } catch (e) {
+                    console.warn('Delete from cloud failed:', e);
+                }
+            }
+        }
+
+        // ==========================================
+        // 4. MAPLIBRE INITIALIZATION (STREET + SATELLITE + 2-FINGER ROTATE)
+        // ==========================================
+        function initMap() {
+            const initialLng = 35.2137;
+            const initialLat = 31.7683;
+
+            const styleSpec = {
+                version: 8,
+                sources: {
+                    'osm-tiles': {
+                        type: 'raster',
+                        tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
+                        tileSize: 256,
+                        attribution: '&copy; OpenStreetMap contributors'
+                    },
+                    'esri-satellite': {
+                        type: 'raster',
+                        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+                        tileSize: 256,
+                        attribution: '&copy; Esri World Imagery'
+                    },
+                    'esri-transport': {
+                        type: 'raster',
+                        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}'],
+                        tileSize: 256,
+                        attribution: '&copy; Esri Transportation'
+                    },
+                    'esri-labels': {
+                        type: 'raster',
+                        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'],
+                        tileSize: 256,
+                        attribution: '&copy; Esri Places & Boundaries'
+                    },
+                    'saved-polygons': {
+                        type: 'geojson',
+                        data: { type: 'FeatureCollection', features: [] }
+                    },
+                    'active-draw': {
+                        type: 'geojson',
+                        data: { type: 'FeatureCollection', features: [] }
+                    },
+                    'measure-line': {
+                        type: 'geojson',
+                        data: { type: 'FeatureCollection', features: [] }
+                    }
+                },
+                layers: [
+                    {
+                        id: 'street-layer',
+                        type: 'raster',
+                        source: 'osm-tiles',
+                        layout: { visibility: 'visible' }
+                    },
+                    {
+                        id: 'satellite-layer',
+                        type: 'raster',
+                        source: 'esri-satellite',
+                        layout: { visibility: 'none' }
+                    },
+                    {
+                        id: 'satellite-transport-layer',
+                        type: 'raster',
+                        source: 'esri-transport',
+                        layout: { visibility: 'none' }
+                    },
+                    {
+                        id: 'satellite-labels-layer',
+                        type: 'raster',
+                        source: 'esri-labels',
+                        layout: { visibility: 'none' }
+                    },
+                    {
+                        id: 'saved-polygons-fill',
+                        type: 'fill',
+                        source: 'saved-polygons',
+                        paint: {
+                            'fill-color': ['coalesce', ['get', 'color'], '#2563eb'],
+                            'fill-opacity': ['case', ['==', ['get', 'highlighted'], true], 0.42, 0.24]
+                        }
+                    },
+                    {
+                        id: 'saved-polygons-outline',
+                        type: 'line',
+                        source: 'saved-polygons',
+                        paint: {
+                            'line-color': ['case', ['==', ['get', 'highlighted'], true], '#f59e0b', ['coalesce', ['get', 'color'], '#2563eb']],
+                            'line-width': ['case', ['==', ['get', 'highlighted'], true], 4.5, 2.5]
+                        }
+                    },
+                    {
+                        id: 'active-draw-fill',
+                        type: 'fill',
+                        source: 'active-draw',
+                        paint: {
+                            'fill-color': '#f59e0b',
+                            'fill-opacity': 0.22
+                        }
+                    },
+                    {
+                        id: 'active-draw-line',
+                        type: 'line',
+                        source: 'active-draw',
+                        paint: {
+                            'line-color': '#f59e0b',
+                            'line-width': 3,
+                            'line-dasharray': [2, 1.5]
+                        }
+                    },
+                    {
+                        id: 'measure-line-layer',
+                        type: 'line',
+                        source: 'measure-line',
+                        paint: {
+                            'line-color': '#4f46e5',
+                            'line-width': 4
+                        }
+                    }
+                ]
+            };
+
+            map = new maplibregl.Map({
+                container: 'map',
+                style: styleSpec,
+                center: [initialLng, initialLat],
+                zoom: 8,
+                minZoom: 5,
+                maxZoom: 18,
+                pitchWithRotate: true,
+                touchPitch: true,
+                dragRotate: true,
+                touchZoomRotate: true
+            });
+
+            function updateCenterAndCompass() {
+                if (!map) return;
+                const c = map.getCenter();
+                const coordsEl = document.getElementById('center-coords-text');
+                if (coordsEl) {
+                    coordsEl.textContent = `${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}`;
+                }
+
+                const bearing = map.getBearing();
+                const needle = document.getElementById('compass-needle-icon');
+                if (needle) {
+                    needle.style.transform = `rotate(${-bearing}deg)`;
+                }
+                const degText = document.getElementById('bearing-deg-text');
+                if (degText) {
+                    const normDeg = Math.round(((bearing % 360) + 360) % 360);
+                    degText.textContent = `${normDeg}°`;
+                }
+            }
+
+            map.on('move', updateCenterAndCompass);
+            map.on('rotate', updateCenterAndCompass);
+
+            // Drag-to-measure pointer/touch events
+            const canvas = map.getCanvas();
+            canvas.addEventListener('pointerdown', (e) => {
+                if (!state.isMeasuring) return;
+                state.isDraggingMeasure = true;
+                const rect = canvas.getBoundingClientRect();
+                const ll = map.unproject([e.clientX - rect.left, e.clientY - rect.top]);
+                state.measureStart = { lat: ll.lat, lng: ll.lng };
+                state.measureEnd = { lat: ll.lat, lng: ll.lng };
+                updateMeasurementVisuals();
+            });
+
+            window.addEventListener('pointermove', (e) => {
+                if (!state.isMeasuring || !state.isDraggingMeasure) return;
+                const rect = canvas.getBoundingClientRect();
+                const ll = map.unproject([e.clientX - rect.left, e.clientY - rect.top]);
+                state.measureEnd = { lat: ll.lat, lng: ll.lng };
+                updateMeasurementVisuals();
+            });
+
+            window.addEventListener('pointerup', () => {
+                if (state.isMeasuring && state.isDraggingMeasure) {
+                    state.isDraggingMeasure = false;
+                }
+            });
+
+            map.on('click', (e) => {
+                if (state.isMeasuring) return;
+
+                if (state.isDrawing) {
+                    addDrawVertex({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+                    return;
+                }
+
+                // Check if user clicked inside a saved polygon layer
+                const hits = map.queryRenderedFeatures(e.point, {
+                    layers: ['saved-polygons-fill', 'saved-polygons-outline']
+                });
+                if (hits && hits.length > 0) {
+                    const hitId = hits[0].properties && hits[0].properties.id;
+                    const found = state.items.find(it => it.id === hitId);
+                    if (found) {
+                        focusOnSavedItem(found, true);
+                    }
+                }
+            });
+
+            map.on('load', () => {
+                mapLoaded = true;
+                updateCenterAndCompass();
+                renderAll();
+            });
+        }
+
+        // ==========================================
+        // 6. DISTANCE MEASUREMENT TOOL (DRAG)
+        // ==========================================
+        function startDistanceMeasurement() {
+            if (state.isDrawing) stopPolygonDrawing();
+            state.isMeasuring = true;
+            state.isDraggingMeasure = false;
+            state.measureStart = null;
+            state.measureEnd = null;
+            if (map) map.dragPan.disable();
+            document.getElementById('measure-toolbar').classList.remove('hidden');
+            document.getElementById('measure-distance-btn').classList.add('border-indigo-600', 'bg-indigo-50');
+            updateMeasurementVisuals();
+            showToast('גרור אצבע או עכבר בין שתי נקודות למדידת מרחק', 'info');
+        }
+
+        function stopDistanceMeasurement() {
+            state.isMeasuring = false;
+            state.isDraggingMeasure = false;
+            state.measureStart = null;
+            state.measureEnd = null;
+            if (map) map.dragPan.enable();
+            document.getElementById('measure-toolbar').classList.add('hidden');
+            document.getElementById('measure-distance-btn').classList.remove('border-indigo-600', 'bg-indigo-50');
+            updateMeasurementVisuals();
+        }
+
+        function updateMeasurementVisuals() {
+            const totalEl = document.getElementById('measure-total-text');
+            if (!mapLoaded) return;
+
+            if (!state.measureStart || !state.measureEnd) {
+                if (totalEl) totalEl.textContent = "0 מ'";
+                const src = map.getSource('measure-line');
+                if (src) src.setData({ type: 'FeatureCollection', features: [] });
+                if (measureLabelMarker) {
+                    measureLabelMarker.remove();
+                    measureLabelMarker = null;
+                }
+                return;
+            }
+
+            const dist = haversineDistance(state.measureStart, state.measureEnd);
+            const labelStr = formatDistanceHebrew(dist);
+            if (totalEl) totalEl.textContent = labelStr;
+
+            const src = map.getSource('measure-line');
+            if (src) {
+                src.setData({
+                    type: 'FeatureCollection',
+                    features: [
+                        {
+                            type: 'Feature',
+                            geometry: {
+                                type: 'LineString',
+                                coordinates: [
+                                    [state.measureStart.lng, state.measureStart.lat],
+                                    [state.measureEnd.lng, state.measureEnd.lat]
+                                ]
+                            }
+                        }
+                    ]
+                });
+            }
+
+            if (!measureLabelMarker) {
+                const el = document.createElement('div');
+                el.className = 'bg-indigo-600 text-white border-2 border-white px-2.5 py-1 rounded-xl text-xs font-black shadow-lg pointer-events-none';
+                measureLabelMarker = new maplibregl.Marker({ element: el, anchor: 'bottom' });
+            }
+            measureLabelMarker.getElement().textContent = labelStr;
+            measureLabelMarker.setLngLat([state.measureEnd.lng, state.measureEnd.lat]).addTo(map);
+        }
+
+        // ==========================================
+        // 7. POLYGON DRAWING WORKFLOW
+        // ==========================================
+        function startPolygonDrawing() {
+            if (state.isMeasuring) stopDistanceMeasurement();
+            state.isDrawing = true;
+            state.drawPoints = [];
+            document.getElementById('drawing-toolbar').classList.remove('hidden');
+            document.getElementById('bottom-action-dock').classList.add('hidden');
+            updateDrawingVisuals();
+            showToast('הקש על המפה או לחץ "בצלב" לסימון קודקודי המתחם', 'info');
+        }
+
+        function stopPolygonDrawing() {
+            state.isDrawing = false;
+            state.drawPoints = [];
+            document.getElementById('drawing-toolbar').classList.add('hidden');
+            document.getElementById('bottom-action-dock').classList.remove('hidden');
+            updateDrawingVisuals();
+        }
+
+        function addDrawVertex(latlng) {
+            state.drawPoints.push(latlng);
+            updateDrawingVisuals();
+        }
+
+        function undoLastVertex() {
+            state.drawPoints.pop();
+            updateDrawingVisuals();
+        }
+
+        function finishPolygonDrawing() {
+            if (state.drawPoints.length < 3) {
+                showToast('יש לסמן לפחות 3 נקודות ליצירת מתחם', 'warning');
+                return;
+            }
+            const pts = [...state.drawPoints];
+            stopPolygonDrawing();
+            openEditorModal({ type: 'polygon', latlngs: pts });
+        }
+
+        function updateDrawingVisuals() {
+            document.getElementById('draw-points-count').textContent = state.drawPoints.length;
+            const metrics = calculatePolygonMetrics(state.drawPoints);
+            const areaBox = document.querySelector('#live-draw-area div:last-child');
+            if (areaBox) areaBox.textContent = `${metrics.sqm.toLocaleString()} מ"ר`;
+
+            drawVertexMarkers.forEach(m => m.remove());
+            drawVertexMarkers = [];
+            if (!mapLoaded) return;
+
+            state.drawPoints.forEach((pt, idx) => {
+                const el = document.createElement('div');
+                el.className = 'w-5 h-5 rounded-full bg-amber-400 border-2 border-slate-950 text-[10px] font-black text-slate-950 flex items-center justify-center shadow';
+                el.textContent = idx + 1;
+                const m = new maplibregl.Marker({ element: el }).setLngLat([pt.lng, pt.lat]).addTo(map);
+                drawVertexMarkers.push(m);
+            });
+
+            const src = map.getSource('active-draw');
+            if (!src) return;
+            if (state.drawPoints.length === 0) {
+                src.setData({ type: 'FeatureCollection', features: [] });
+                return;
+            }
+            const ring = state.drawPoints.map(p => [p.lng, p.lat]);
+            if (ring.length >= 3) ring.push(ring[0]);
+            src.setData({
+                type: 'FeatureCollection',
+                features: [{
+                    type: 'Feature',
+                    geometry: {
+                        type: state.drawPoints.length >= 3 ? 'Polygon' : 'LineString',
+                        coordinates: state.drawPoints.length >= 3 ? [ring] : ring
+                    }
+                }]
+            });
+        }
+
+        // ==========================================
+        // 8. RENDERING ITEMS ON MAP & SIDEBAR
+        // ==========================================
+        function renderAll() {
+            renderMapItems();
+            renderSidebarList();
+            updateCounts();
+        }
+
+        function updateCounts() {
+            const total = state.items.length;
+            const polys = state.items.filter(i => i.type === 'polygon').length;
+            const markers = state.items.filter(i => i.type !== 'polygon').length;
+            const badge = document.getElementById('items-badge');
+            if (badge) badge.textContent = total;
+            const cAll = document.getElementById('count-all');
+            const cPoly = document.getElementById('count-polygons');
+            const cMark = document.getElementById('count-markers');
+            if (cAll) cAll.textContent = total;
+            if (cPoly) cPoly.textContent = polys;
+            if (cMark) cMark.textContent = markers;
+        }
+
+        function renderMapItems() {
+            if (!mapLoaded) return;
+
+            savedMarkersMap.forEach(m => m.remove());
+            savedMarkersMap.clear();
+
+            const polySrc = map.getSource('saved-polygons');
+            if (!state.showPermanentLabels) {
+                if (polySrc) polySrc.setData({ type: 'FeatureCollection', features: [] });
+                return;
+            }
+
+            const polyFeatures = [];
+
+            state.items.forEach(item => {
+                const isHighlighted = state.highlightedItemId === item.id;
+                const color = item.color || '#2563eb';
+
+                if (item.type === 'polygon' && Array.isArray(item.latlngs) && item.latlngs.length >= 3) {
+                    const ring = item.latlngs.map(p => [p.lng, p.lat]);
+                    ring.push(ring[0]);
+                    polyFeatures.push({
+                        type: 'Feature',
+                        properties: { id: item.id, color, highlighted: isHighlighted },
+                        geometry: { type: 'Polygon', coordinates: [ring] }
+                    });
+
+                    const center = getPolygonCenter(item.latlngs);
+                    const labelEl = document.createElement('div');
+                    labelEl.className = `polygon-map-label ${isHighlighted ? 'search-highlighted' : ''}`;
+                    labelEl.style.borderColor = color;
+                    labelEl.innerHTML = `<i class="ph-bold ph-polygon" style="color:${isHighlighted ? '#0f172a' : '#fbbf24'}"></i><span>${escapeHtml(item.title)}</span>`;
+                    labelEl.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        focusOnSavedItem(item, true);
+                    });
+
+                    const marker = new maplibregl.Marker({ element: labelEl, anchor: 'center' })
+                        .setLngLat([center.lng, center.lat])
+                        .addTo(map);
+                    savedMarkersMap.set(item.id, marker);
+                } else if (item.latlng) {
+                    const pinEl = document.createElement('div');
+                    pinEl.className = `custom-pin-wrapper flex flex-col items-center ${isHighlighted ? 'search-highlighted' : ''}`;
+                    pinEl.innerHTML = `
+                        <div style="background-color:${color}" class="w-9 h-9 rounded-full border-2 border-white shadow-xl flex items-center justify-center text-white">
+                            <i class="ph-bold ph-${item.icon || 'map-pin'} text-lg"></i>
+                        </div>
+                        <div class="mt-0.5 px-2 py-0.5 rounded-lg bg-slate-900/90 text-white text-[11px] font-extrabold border border-white/75 shadow max-w-[160px] truncate">
+                            ${escapeHtml(item.title)}
+                        </div>
+                    `;
+                    pinEl.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        focusOnSavedItem(item, true);
+                    });
+
+                    const marker = new maplibregl.Marker({ element: pinEl, anchor: 'bottom' })
+                        .setLngLat([item.latlng.lng, item.latlng.lat])
+                        .addTo(map);
+                    savedMarkersMap.set(item.id, marker);
+                }
+            });
+
+            if (polySrc) {
+                polySrc.setData({ type: 'FeatureCollection', features: polyFeatures });
+            }
+        }
+
+        function focusOnSavedItem(item, openCard = true) {
+            if (!map || !item) return;
+            state.highlightedItemId = item.id;
+            renderMapItems();
+            closeSidebar();
+            map.stop();
+
+            if (item.type === 'polygon' && Array.isArray(item.latlngs) && item.latlngs.length >= 3) {
+                const center = getPolygonCenter(item.latlngs);
+                const lngs = item.latlngs.map(p => p.lng);
+                const lats = item.latlngs.map(p => p.lat);
+                const span = Math.max(Math.max(...lngs) - Math.min(...lngs), Math.max(...lats) - Math.min(...lats));
+                let targetZoom = 16;
+                if (span > 0.05) targetZoom = 12.5;
+                else if (span > 0.015) targetZoom = 14;
+                else if (span > 0.005) targetZoom = 15.2;
+
+                map.jumpTo({ center: [center.lng, center.lat], zoom: Math.max(map.getZoom(), targetZoom) });
+            } else if (item.latlng) {
+                map.jumpTo({ center: [item.latlng.lng, item.latlng.lat], zoom: Math.max(map.getZoom(), 16.5) });
+            }
+
+            if (openCard) {
+                setTimeout(() => openDetailsModal(item), 60);
+            }
+        }
+
+        function renderSidebarList() {
+            const listEl = document.getElementById('saved-items-list');
+            const emptyEl = document.getElementById('empty-list-state');
+            if (!listEl) return;
+
+            const q = state.searchFilterText.trim().toLowerCase();
+            const filtered = state.items.filter(item => {
+                if (state.currentFilter === 'polygon' && item.type !== 'polygon') return false;
+                if (state.currentFilter === 'marker' && item.type === 'polygon') return false;
+                if (!q) return true;
+                return (item.title && item.title.toLowerCase().includes(q)) ||
+                       (item.address && item.address.toLowerCase().includes(q)) ||
+                       (item.notes && item.notes.toLowerCase().includes(q));
+            });
+
+            Array.from(listEl.querySelectorAll('.saved-item-card')).forEach(el => el.remove());
+
+            if (filtered.length === 0) {
+                if (emptyEl) emptyEl.classList.remove('hidden');
+                return;
+            }
+            if (emptyEl) emptyEl.classList.add('hidden');
+
+            filtered.forEach(item => {
+                const isPoly = item.type === 'polygon';
+                const card = document.createElement('div');
+                card.className = 'saved-item-card bg-white rounded-2xl p-3.5 border-2 border-slate-200 hover:border-blue-500 shadow-sm cursor-pointer transition-all flex items-start justify-between gap-3';
+                card.innerHTML = `
+                    <div class="flex items-start gap-3 min-w-0">
+                        <div style="background-color:${item.color || '#2563eb'}" class="w-10 h-10 rounded-xl text-white flex items-center justify-center shrink-0 shadow">
+                            <i class="ph-bold ph-${isPoly ? 'polygon' : (item.icon || 'map-pin')} text-xl"></i>
+                        </div>
+                        <div class="min-w-0">
+                            <div class="font-black text-sm text-slate-950 truncate">${escapeHtml(item.title)}</div>
+                            <div class="text-xs text-slate-500 font-bold truncate">${escapeHtml(item.address || (isPoly ? `${item.dunam || 0} דונם` : ''))}</div>
+                            ${item.notes ? `<div class="text-xs text-slate-700 mt-1 line-clamp-2 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200/80">${escapeHtml(item.notes)}</div>` : ''}
+                        </div>
+                    </div>
+                    <i class="ph-bold ph-caret-left text-slate-400 text-lg shrink-0 mt-1"></i>
+                `;
+                card.addEventListener('click', () => focusOnSavedItem(item, true));
+                listEl.appendChild(card);
+            });
+        }
+
+        // ==========================================
+        // 9. MODALS, HELPERS & SHARE LOCATION
+        // ==========================================
+        function openSidebar() {
+            document.getElementById('items-drawer').classList.remove('translate-x-full');
+        }
+
+        function closeSidebar() {
+            document.getElementById('items-drawer').classList.add('translate-x-full');
+        }
+
+        function renderColorSwatches() {
+            const container = document.getElementById('color-swatches');
+            container.innerHTML = '';
+            PALETTE_COLORS.forEach(c => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.style.backgroundColor = c;
+                btn.className = `w-7 h-7 rounded-full border-2 transition-transform ${state.selectedColor === c ? 'border-slate-950 scale-115 ring-2 ring-offset-1 ring-slate-900' : 'border-white shadow'}`;
+                btn.addEventListener('click', () => {
+                    state.selectedColor = c;
+                    renderColorSwatches();
+                });
+                container.appendChild(btn);
+            });
+        }
+
+        async function reverseGeocode(lat, lng) {
+            try {
+                const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=he`);
+                const data = await res.json();
+                if (data && data.display_name) {
+                    return data.display_name.split(',').slice(0, 3).join(',').trim();
+                }
+            } catch (e) {}
+            return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        }
+
+        function openEditorModal(opts) {
+            const isPoly = opts.type === 'polygon';
+            document.getElementById('edit-item-id').value = opts.id || '';
+            document.getElementById('edit-item-type').value = opts.type;
+            document.getElementById('edit-title').value = opts.title || '';
+            document.getElementById('edit-address').value = opts.address || '';
+            document.getElementById('edit-notes').value = opts.notes || '';
+            document.getElementById('edit-icon').value = opts.icon || 'map-pin';
+
+            state.selectedColor = opts.color || (isPoly ? '#d97706' : '#2563eb');
+            state.pendingCoords = opts.latlng || null;
+            state.pendingPolygonPoints = opts.latlngs || null;
+
+            document.getElementById('modal-title').textContent = isPoly ? 'הגדרת שם ומלל למתחם' : 'שמירת כתובת ומלל במפה';
+            document.getElementById('title-field-label').textContent = isPoly ? 'שם המתחם (יוצג קבוע על המפה) *' : 'שם המקום / הכתובת *';
+            document.getElementById('icon-picker-group').classList.toggle('hidden', isPoly);
+
+            const statsBox = document.getElementById('modal-polygon-stats');
+            if (isPoly && state.pendingPolygonPoints) {
+                const m = calculatePolygonMetrics(state.pendingPolygonPoints);
+                document.getElementById('stat-sqm').textContent = m.sqm.toLocaleString();
+                document.getElementById('stat-dunam').textContent = m.dunam;
+                document.getElementById('stat-perimeter').textContent = m.perimeter.toLocaleString();
+                statsBox.classList.remove('hidden');
+            } else {
+                statsBox.classList.add('hidden');
+            }
+
+            renderColorSwatches();
+            document.getElementById('editor-modal').classList.remove('hidden');
+
+            if (!opts.address && state.pendingCoords) {
+                reverseGeocode(state.pendingCoords.lat, state.pendingCoords.lng).then(addr => {
+                    const addrInp = document.getElementById('edit-address');
+                    if (addrInp && !addrInp.value) addrInp.value = addr;
+                });
+            }
+        }
+
+        function closeEditorModal() {
+            document.getElementById('editor-modal').classList.add('hidden');
+        }
+
+        function openDetailsModal(item) {
+            state.activeItem = item;
+            const isPoly = item.type === 'polygon';
+            const headerBar = document.getElementById('details-header-bar');
+            headerBar.style.backgroundColor = item.color || '#2563eb';
+
+            document.getElementById('details-badge').textContent = isPoly ? 'מתחם שמור' : 'כתובת שמורה';
+            document.getElementById('details-title').textContent = item.title;
+            document.getElementById('details-address').textContent = item.address || '';
+            document.getElementById('details-icon').className = `ph-bold ph-${isPoly ? 'polygon' : (item.icon || 'map-pin')} text-2xl`;
+            document.getElementById('details-notes-box').textContent = item.notes || 'אין מלל נוסף.';
+
+            const metricsBox = document.getElementById('details-polygon-metrics');
+            if (isPoly) {
+                document.getElementById('det-sqm').textContent = (item.areaSqm || 0).toLocaleString();
+                document.getElementById('det-dunam').textContent = item.dunam || 0;
+                document.getElementById('det-perim').textContent = (item.perimeterM || 0).toLocaleString();
+                metricsBox.classList.remove('hidden');
+            } else {
+                metricsBox.classList.add('hidden');
+            }
+
+            const coords = isPoly ? getPolygonCenter(item.latlngs) : item.latlng;
+            document.getElementById('details-waze-nav-btn').href = `https://waze.com/ul?ll=${coords.lat},${coords.lng}&navigate=yes`;
+            document.getElementById('details-gmaps-nav-btn').href = `https://www.google.com/maps/dir/?api=1&destination=${coords.lat},${coords.lng}`;
+
+            if (item.updatedAt) {
+                document.getElementById('details-updated').textContent = `עודכן: ${new Date(item.updatedAt).toLocaleDateString('he-IL')}`;
+            }
+
+            document.getElementById('details-modal').classList.remove('hidden');
+        }
+
+        function closeDetailsModal() {
+            document.getElementById('details-modal').classList.add('hidden');
+        }
+
+        function buildShareLocationMessage(lat, lng, note) {
+            const titleLine = note ? `📍 *${note}*\n` : '📍 *מיקום משותף מהמפה*\n';
+            return `${titleLine}קואורדינטות: ${lat.toFixed(6)}, ${lng.toFixed(6)}\n\n🚗 לניווט ב-Waze:\nhttps://waze.com/ul?ll=${lat},${lng}&navigate=yes\n\n🗺️ לניווט ב-Google Maps:\nhttps://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+        }
+
+        function updateShareModalLinks() {
+            if (!currentSharedLocation) return;
+            const noteVal = document.getElementById('share-loc-note-input').value.trim();
+            const msg = buildShareLocationMessage(currentSharedLocation.lat, currentSharedLocation.lng, noteVal);
+            document.getElementById('share-whatsapp-link').href = `https://wa.me/?text=${encodeURIComponent(msg)}`;
+        }
+
+        function openShareLocationModal(lat, lng, label) {
+            currentSharedLocation = { lat, lng, label: label || 'מיקום מסומן' };
+            document.getElementById('share-loc-coords-label').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+            document.getElementById('share-loc-note-input').value = label || '';
+            updateShareModalLinks();
+            document.getElementById('share-location-modal').classList.remove('hidden');
+        }
+
+        function closeShareLocationModal() {
+            document.getElementById('share-location-modal').classList.add('hidden');
+        }
+
+        function placeSharedPinOnMap(lat, lng, label, openModal) {
+            if (sharedPinMarker) sharedPinMarker.remove();
+            const el = document.createElement('div');
+            el.className = 'flex flex-col items-center cursor-pointer';
+            el.innerHTML = `
+                <div class="w-10 h-10 rounded-full bg-emerald-600 border-3 border-white shadow-xl flex items-center justify-center text-white">
+                    <i class="ph-bold ph-paper-plane-tilt text-xl"></i>
+                </div>
+            `;
+            el.addEventListener('click', () => openShareLocationModal(lat, lng, label));
+            sharedPinMarker = new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat([lng, lat]).addTo(map);
+            if (openModal) openShareLocationModal(lat, lng, label);
+        }
+
+        function askConfirmation(title, message, onYes) {
+            document.getElementById('confirm-title').textContent = title;
+            document.getElementById('confirm-message').textContent = message;
+            state.confirmCallback = onYes;
+            document.getElementById('confirm-modal').classList.remove('hidden');
+        }
+
+        let toastTimer = null;
+        function showToast(msg, type = 'success') {
+            const toast = document.getElementById('toast-notification');
+            const textEl = document.getElementById('toast-message');
+            const iconEl = document.getElementById('toast-icon');
+            if (!toast || !textEl) return;
+
+            textEl.textContent = msg;
+            if (type === 'warning') {
+                iconEl.className = 'ph-bold ph-warning-circle text-amber-400 text-lg shrink-0';
+            } else if (type === 'info') {
+                iconEl.className = 'ph-bold ph-info text-sky-400 text-lg shrink-0';
+            } else {
+                iconEl.className = 'ph-bold ph-check-circle text-emerald-400 text-lg shrink-0';
+            }
+
+            toast.classList.remove('opacity-0');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => toast.classList.add('opacity-0'), 3000);
+        }
+
+        // ==========================================
+        // UNIFIED SEARCH (Saved Polygons + Google Maps Coords + Fuzzy Israel Addresses)
+        // ==========================================
+        let searchDebounceTimer = null;
+
+        // Parse Google Maps coordinates in DMS (e.g. 32°43'10.1"N 35°18'16.0"E), Decimal, or Google Maps URLs
+        function parseGoogleMapsCoordinates(input) {
+            if (!input) return null;
+            const trimmed = input.trim();
+
+            // 1. DMS format: 32°43'10.1"N 35°18'16.0"E
+            const dmsRegex = /(\d{1,3})\s*[°º]\s*(\d{1,2})\s*['′]\s*(\d{1,2}(?:\.\d+)?)\s*["″]?\s*([NSns])\s*[,;\s]+\s*(\d{1,3})\s*[°º]\s*(\d{1,2})\s*['′]\s*(\d{1,2}(?:\.\d+)?)\s*["″]?\s*([EWew])/;
+            const dmsMatch = trimmed.match(dmsRegex);
+            if (dmsMatch) {
+                let lat = parseFloat(dmsMatch[1]) + parseFloat(dmsMatch[2]) / 60 + parseFloat(dmsMatch[3]) / 3600;
+                if (dmsMatch[4].toUpperCase() === 'S') lat = -lat;
+                let lng = parseFloat(dmsMatch[5]) + parseFloat(dmsMatch[6]) / 60 + parseFloat(dmsMatch[7]) / 3600;
+                if (dmsMatch[8].toUpperCase() === 'W') lng = -lng;
+                if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+                    return { lat, lng, label: `${lat.toFixed(6)}, ${lng.toFixed(6)}` };
+                }
+            }
+
+            // 2. Google Maps URL with @lat,lng or ?q=lat,lng
+            const urlCoordRegex = /(?:@|[?&](?:q|ll|destination)=)(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/;
+            const urlMatch = trimmed.match(urlCoordRegex);
+            if (urlMatch) {
+                const lat = parseFloat(urlMatch[1]);
+                const lng = parseFloat(urlMatch[2]);
+                if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+                    return { lat, lng, label: `${lat.toFixed(6)}, ${lng.toFixed(6)}` };
+                }
+            }
+
+            // 3. Plain decimal pair: 32.71947, 35.30444
+            const decRegex = /^(-?\d{1,2}\.\d+)\s*[,;\s]+\s*(-?\d{1,3}\.\d+)$/;
+            const decMatch = trimmed.match(decRegex);
+            if (decMatch) {
+                const lat = parseFloat(decMatch[1]);
+                const lng = parseFloat(decMatch[2]);
+                if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+                    return { lat, lng, label: `${lat.toFixed(6)}, ${lng.toFixed(6)}` };
+                }
+            }
+
+            return null;
+        }
+
+        // Normalize Hebrew spelling quirks & strip house numbers when villages/streets lack house numbers
+        function buildSmartHebrewSearchQueries(rawQuery) {
+            const queries = [rawQuery];
+            // Strip trailing/standalone house numbers (useful in Arab villages & unnumbered streets)
+            const withoutHouseNum = rawQuery.replace(/\b\d+[א-ת]?\b/g, '').replace(/\s+/g, ' ').trim();
+            if (withoutHouseNum && withoutHouseNum !== rawQuery) {
+                queries.push(withoutHouseNum);
+            }
+
+            // Common Hebrew spelling variations (כ/ח, ת/ט, י/יי, ו/וו, א/ע, ס/ש)
+            const phoneticVariants = new Set();
+            queries.forEach(q => {
+                phoneticVariants.add(q);
+                // Common typos like דוכיפת / דוחיפת / דוכפת
+                phoneticVariants.add(q.replace(/כ/g, 'ח'));
+                phoneticVariants.add(q.replace(/ח/g, 'כ'));
+                phoneticVariants.add(q.replace(/ת/g, 'ט'));
+                phoneticVariants.add(q.replace(/ט/g, 'ת'));
+                phoneticVariants.add(q.replace(/יי/g, 'י'));
+                phoneticVariants.add(q.replace(/וו/g, 'ו'));
+            });
+
+            return Array.from(phoneticVariants).slice(0, 4);
+        }
+
+        function jumpToSearchedCoordinate(lat, lng, title, fullAddress) {
+            map.flyTo({ center: [lng, lat], zoom: 17, duration: 900 });
+
+            if (tempSearchMarker) tempSearchMarker.remove();
+            const pinEl = document.createElement('div');
+            pinEl.className = 'flex flex-col items-center cursor-pointer';
+            pinEl.innerHTML = `
+                <div class="w-10 h-10 rounded-full bg-blue-600 border-3 border-white shadow-xl flex items-center justify-center text-white animate-bounce">
+                    <i class="ph-bold ph-navigation-arrow text-xl"></i>
+                </div>
+                ${state.showPermanentLabels ? `
+                    <div class="search-pin-label mt-1 px-2.5 py-0.5 rounded-lg bg-slate-900/95 text-white text-[11px] font-extrabold border border-white/80 shadow whitespace-nowrap max-w-[220px] truncate">
+                        ${escapeHtml(title)}
+                    </div>
+                ` : ''}
+            `;
+            pinEl.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                openEditorModal({
+                    type: 'marker',
+                    title: title,
+                    address: fullAddress || title,
+                    latlng: { lat, lng }
+                });
+            });
+
+            tempSearchMarker = new maplibregl.Marker({ element: pinEl, anchor: 'bottom' })
+                .setLngLat([lng, lat])
+                .addTo(map);
+        }
+
+        async function runUnifiedSearch(query) {
+            const dropdown = document.getElementById('search-results-dropdown');
+            const q = query.trim();
+            if (!q) {
+                dropdown.classList.add('hidden');
+                state.highlightedItemId = null;
+                renderMapItems();
+                return;
+            }
+
+            dropdown.innerHTML = '';
+
+            // 0. Check if user pasted Google Maps Coordinates (DMS, Decimal, or Link)
+            const parsedCoord = parseGoogleMapsCoordinates(q);
+            if (parsedCoord) {
+                const coordRow = document.createElement('button');
+                coordRow.type = 'button';
+                coordRow.className = 'w-full text-right px-4 py-3.5 hover:bg-emerald-50 flex items-center justify-between gap-3 transition-colors bg-emerald-50/50';
+                coordRow.innerHTML = `
+                    <div class="flex items-center gap-2.5 min-w-0">
+                        <span class="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                            <i class="ph-bold ph-crosshair text-lg"></i>
+                        </span>
+                        <div class="min-w-0">
+                            <div class="font-black text-sm text-slate-950 truncate" dir="ltr">${escapeHtml(parsedCoord.label)}</div>
+                            <div class="text-xs text-emerald-800 font-bold truncate">קואורדינטות Google Maps זוהו בהצלחה</div>
+                        </div>
+                    </div>
+                    <span class="text-[11px] font-extrabold bg-emerald-600 text-white px-2.5 py-1 rounded-lg shrink-0">התמקד בנקודה</span>
+                `;
+                coordRow.addEventListener('click', async () => {
+                    dropdown.classList.add('hidden');
+                    const resolvedAddr = await reverseGeocode(parsedCoord.lat, parsedCoord.lng);
+                    jumpToSearchedCoordinate(parsedCoord.lat, parsedCoord.lng, parsedCoord.label, resolvedAddr);
+                });
+                dropdown.appendChild(coordRow);
+                dropdown.classList.remove('hidden');
+                return;
+            }
+
+            const qLower = q.toLowerCase();
+
+            // 1. Search saved polygons & markers first
+            const matchedSaved = state.items.filter(item =>
+                (item.title && item.title.toLowerCase().includes(qLower)) ||
+                (item.address && item.address.toLowerCase().includes(qLower)) ||
+                (item.notes && item.notes.toLowerCase().includes(qLower))
+            );
+
+            // Highlight matching polygon on the map immediately while searching!
+            if (matchedSaved.length > 0) {
+                state.highlightedItemId = matchedSaved[0].id;
+                renderMapItems();
+            } else {
+                state.highlightedItemId = null;
+                renderMapItems();
+            }
+
+            // 2. Smart Israel address search (handles missing house numbers in villages & spelling variations)
+            const candidateQueries = buildSmartHebrewSearchQueries(q);
+            const seenPlaceIds = new Set();
+            let addressResults = [];
+
+            for (const cand of candidateQueries) {
+                if (addressResults.length >= 6) break;
+                try {
+                    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(cand)}&countrycodes=il&accept-language=he&limit=5`;
+                    const res = await fetch(url);
+                    const batch = await res.json();
+                    if (Array.isArray(batch)) {
+                        batch.forEach(item => {
+                            if (!seenPlaceIds.has(item.place_id)) {
+                                seenPlaceIds.add(item.place_id);
+                                addressResults.push(item);
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.warn('Address search variant failed:', e);
+                }
+            }
+
+            // Also try Photon geocoder (excellent fuzzy typo tolerance for Hebrew streets like דוכיפת/דוחיפת)
+            if (addressResults.length < 3) {
+                try {
+                    const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&bbox=34.2,29.4,35.9,33.4&limit=4`;
+                    const pRes = await fetch(photonUrl);
+                    const pData = await pRes.json();
+                    if (pData && Array.isArray(pData.features)) {
+                        pData.features.forEach((f, idx) => {
+                            const props = f.properties || {};
+                            const geom = f.geometry || {};
+                            if (Array.isArray(geom.coordinates)) {
+                                const nameParts = [props.name, props.street, props.city || props.town || props.village].filter(Boolean);
+                                const label = nameParts.join(', ');
+                                if (label && !addressResults.some(r => r.display_name.includes(props.name || '___'))) {
+                                    addressResults.push({
+                                        place_id: `photon_${idx}_${Date.now()}`,
+                                        lat: geom.coordinates[1],
+                                        lon: geom.coordinates[0],
+                                        display_name: label
+                                    });
+                                }
+                            }
+                        });
+                    }
+                } catch (e) {}
+            }
+
+            if (matchedSaved.length === 0 && addressResults.length === 0) {
+                dropdown.innerHTML = `
+                    <div class="p-4 text-center space-y-1.5">
+                        <div class="text-xs font-extrabold text-slate-700">לא נמצאה כתובת מדויקת עבור "${escapeHtml(q)}"</div>
+                        <div class="text-[11px] text-slate-500 leading-relaxed">בכפרים ובאזורים ללא מספרי בתים ניתן לחפש רק את <b>שם היישוב/הכפר</b>, לעבור לתצוגת <b>לוויין</b> וללחוץ <b>"הוסף כתובת"</b> על הבית המבוקש.</div>
+                    </div>
+                `;
+                dropdown.classList.remove('hidden');
+                return;
+            }
+
+            // Render matched saved polygons / markers at the top
+            matchedSaved.forEach(item => {
+                const isPoly = item.type === 'polygon';
+                const row = document.createElement('button');
+                row.type = 'button';
+                row.className = 'w-full text-right px-4 py-3 hover:bg-amber-50 flex items-center justify-between gap-3 transition-colors bg-amber-50/35';
+                row.innerHTML = `
+                    <div class="flex items-center gap-2.5 min-w-0">
+                        <span style="background-color: ${item.color || '#d97706'}" class="w-8 h-8 rounded-xl text-white flex items-center justify-center shrink-0">
+                            <i class="ph-bold ph-${isPoly ? 'polygon' : (item.icon || 'map-pin')} text-base"></i>
+                        </span>
+                        <div class="min-w-0">
+                            <div class="font-black text-sm text-slate-950 truncate">${escapeHtml(item.title)}</div>
+                            <div class="text-xs text-slate-600 font-bold truncate">${escapeHtml(item.notes || item.address || 'מתחם שמור במפה')}</div>
+                        </div>
+                    </div>
+                    <span class="text-[11px] font-extrabold bg-amber-400 text-slate-950 px-2 py-0.5 rounded-lg shrink-0">
+                        ${isPoly ? 'מתחם שמור' : 'כתובת שמורה'}
+                    </span>
+                `;
+                row.addEventListener('click', () => {
+                    dropdown.classList.add('hidden');
+                    focusOnSavedItem(item, false);
+                });
+                dropdown.appendChild(row);
+            });
+
+            // Render geocoding results
+            addressResults.forEach(place => {
+                const shortName = place.display_name.split(',').slice(0, 3).join(',').trim();
+                const row = document.createElement('button');
+                row.type = 'button';
+                row.className = 'w-full text-right px-4 py-3 hover:bg-blue-50 flex items-center justify-between gap-3 transition-colors';
+                row.innerHTML = `
+                    <div class="flex items-center gap-2.5 min-w-0">
+                        <span class="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+                            <i class="ph-bold ph-map-pin text-base"></i>
+                        </span>
+                        <div class="min-w-0">
+                            <div class="font-bold text-sm text-slate-900 truncate">${escapeHtml(shortName)}</div>
+                            <div class="text-[11px] text-slate-500 truncate">${escapeHtml(place.display_name)}</div>
+                        </div>
+                    </div>
+                    <span class="text-[11px] font-extrabold text-blue-600 shrink-0">הצג במפה</span>
+                `;
+                row.addEventListener('click', () => {
+                    dropdown.classList.add('hidden');
+                    const lat = parseFloat(place.lat);
+                    const lng = parseFloat(place.lon);
+                    jumpToSearchedCoordinate(lat, lng, shortName, place.display_name);
+                });
+                dropdown.appendChild(row);
+            });
+
+            dropdown.classList.remove('hidden');
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        // ==========================================
+        // 10. EVENT LISTENERS WIRING
+        // ==========================================
+        function setupEventListeners() {
+            // Confirm Modal
+            document.getElementById('confirm-yes-btn').addEventListener('click', () => {
+                document.getElementById('confirm-modal').classList.add('hidden');
+                if (typeof state.confirmCallback === 'function') state.confirmCallback();
+            });
+            document.getElementById('confirm-no-btn').addEventListener('click', () => {
+                document.getElementById('confirm-modal').classList.add('hidden');
+            });
+
+            // Sidebar Drawer
+            document.getElementById('toggle-sidebar-btn').addEventListener('click', openSidebar);
+            document.getElementById('close-sidebar-btn').addEventListener('click', closeSidebar);
+
+            // Unified Search Input
+            const searchInput = document.getElementById('unified-search-input');
+            const clearSearchBtn = document.getElementById('clear-search-btn');
+
+            searchInput.addEventListener('input', (e) => {
+                const val = e.target.value;
+                clearSearchBtn.classList.toggle('hidden', !val);
+                clearTimeout(searchDebounceTimer);
+                searchDebounceTimer = setTimeout(() => runUnifiedSearch(val), 280);
+            });
+
+            document.getElementById('search-submit-btn').addEventListener('click', () => {
+                runUnifiedSearch(searchInput.value);
+            });
+
+            clearSearchBtn.addEventListener('click', () => {
+                searchInput.value = '';
+                clearSearchBtn.classList.add('hidden');
+                document.getElementById('search-results-dropdown').classList.add('hidden');
+                state.highlightedItemId = null;
+                renderMapItems();
+            });
+
+            // Close dropdown when clicking outside
+            document.addEventListener('click', (e) => {
+                const dropdown = document.getElementById('search-results-dropdown');
+                if (!searchInput.contains(e.target) && !dropdown.contains(e.target)) {
+                    dropdown.classList.add('hidden');
+                }
+            });
+
+            // Center Crosshair Coordinates Copy
+            document.getElementById('center-coords-pill').addEventListener('click', () => {
+                if (!map) return;
+                const c = map.getCenter();
+                const coordsText = `${c.lat.toFixed(6)}, ${c.lng.toFixed(6)}`;
+                copyTextToClipboardSafe(coordsText);
+                showToast(`קואורדינטות הצלב הועתקו: ${coordsText}`);
+            });
+
+            // Distance Measurement Button & Controls
+            document.getElementById('measure-distance-btn').addEventListener('click', () => {
+                if (state.isMeasuring) {
+                    stopDistanceMeasurement();
+                } else {
+                    startDistanceMeasurement();
+                }
+            });
+            document.getElementById('measure-clear-btn').addEventListener('click', () => {
+                state.measureStart = null;
+                state.measureEnd = null;
+                state.isDraggingMeasure = false;
+                updateMeasurementVisuals();
+                showToast('המדידה אופסה', 'info');
+            });
+            document.getElementById('measure-close-btn').addEventListener('click', stopDistanceMeasurement);
+
+            // Compass Reset North
+            document.getElementById('compass-reset-btn').addEventListener('click', () => {
+                if (map) {
+                    map.easeTo({ bearing: 0, pitch: 0, duration: 500 });
+                    showToast('כיוון המפה אופס לצפון', 'info');
+                }
+            });
+
+            // Sync Status Pill -> Open Sync & Share Modal (Works reliably on Chrome Mobile)
+            function openSyncModalHandler(e) {
+                if (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+                const expBox = document.getElementById('sync-status-explanation');
+                const extSetupBox = document.getElementById('external-cloud-setup-box');
+                const connBadge = document.getElementById('cloud-conn-badge');
+
+                if (state.cloudReady && expBox) {
+                    expBox.className = 'bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-4 text-sm text-slate-800 space-y-2.5 leading-relaxed';
+                    expBox.innerHTML = `
+                        <p class="font-black text-emerald-950 flex items-center gap-1.5">
+                            <i class="ph-bold ph-check-circle text-emerald-600 text-lg"></i>
+                            סנכרון חי פעיל לכל הפלאפונים! (${state.items.length} פריטים בענן)
+                        </p>
+                        <p class="text-xs text-slate-700">המערכת מחוברת לפרויקט <b>${escapeHtml(firebaseConfig.projectId || 'mormaps-1071')}</b>. כל כתובת או מתחם שתשמור אצלך מופיעים מיד אצל כל מי שנמצא באתר.</p>
+                        <button type="button" id="force-cloud-refresh-btn" class="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold py-2.5 px-3 rounded-xl text-xs shadow flex items-center justify-center gap-1.5">
+                            <i class="ph-bold ph-arrows-clockwise text-base"></i>
+                            רענן ומשוך נתונים מהענן עכשיו
+                        </button>
+                    `;
+                    const refreshNowBtn = document.getElementById('force-cloud-refresh-btn');
+                    if (refreshNowBtn) {
+                        refreshNowBtn.addEventListener('click', () => forceSyncFromCloud(true));
+                    }
+                    if (connBadge) {
+                        connBadge.textContent = 'מחובר ופעיל';
+                        connBadge.className = 'text-[11px] font-extrabold px-2 py-0.5 rounded bg-emerald-100 text-emerald-900';
+                    }
+                } else if (expBox) {
+                    expBox.className = 'bg-amber-50 border-2 border-amber-200 rounded-2xl p-4 text-sm text-slate-800 space-y-2.5 leading-relaxed';
+                    expBox.innerHTML = `
+                        <p class="font-black text-amber-950">נדרש אישור הרשאות (Rules) ב-Firebase</p>
+                        <p class="text-xs text-slate-700">החיבור לפרויקט <b>mormaps-1071</b> קיים, אך מסד הנתונים חוסם גישה (<code>Missing or insufficient permissions</code>). העתק את הכללים הבאים והדבק בלשונית <b>Firestore Database -> Rules</b>:</p>
+                        <pre dir="ltr" class="bg-slate-900 text-emerald-300 p-2.5 rounded-xl text-[11px] font-mono overflow-x-auto select-all">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}</pre>
+                        <div class="flex flex-col sm:flex-row gap-2 pt-1">
+                            <button type="button" id="copy-firestore-rules-btn" class="flex-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-extrabold py-2 px-3 rounded-xl text-xs shadow flex items-center justify-center gap-1.5">
+                                <i class="ph-bold ph-copy text-base"></i>
+                                העתק קוד Rules
+                            </button>
+                            <a href="https://console.firebase.google.com/project/mormaps-1071/firestore/rules" target="_blank" rel="noopener noreferrer" class="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-extrabold py-2 px-3 rounded-xl text-xs shadow flex items-center justify-center gap-1.5">
+                                <i class="ph-bold ph-arrow-square-out text-base text-sky-400"></i>
+                                פתח Rules ב-Firebase
+                            </a>
+                        </div>
+                    `;
+                    const copyRulesBtn = document.getElementById('copy-firestore-rules-btn');
+                    if (copyRulesBtn) {
+                        copyRulesBtn.addEventListener('click', () => {
+                            const rulesCode = `rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /{document=**} {\n      allow read, write: if true;\n    }\n  }\n}`;
+                            copyTextToClipboardSafe(rulesCode);
+                            showToast('קוד ה-Rules הועתק! הדבק אותו ב-Firebase ולחץ Publish');
+                        });
+                    }
+                    if (extSetupBox) extSetupBox.classList.remove('hidden');
+                    if (connBadge) {
+                        connBadge.textContent = firebaseConfig ? 'ממתין ל-Rules' : 'לא מחובר';
+                        connBadge.className = 'text-[11px] font-extrabold px-2 py-0.5 rounded bg-amber-100 text-amber-900';
+                    }
+                    try {
+                        const savedCfgStr = localStorage.getItem(CUSTOM_CLOUD_CFG_KEY);
+                        if (savedCfgStr) {
+                            document.getElementById('custom-fb-config-input').value = savedCfgStr;
+                        }
+                    } catch (err) {}
+                }
+                const syncModalEl = document.getElementById('sync-modal');
+                syncModalEl.classList.remove('hidden');
+                syncModalEl.style.display = 'flex';
+            }
+
+            const syncPillBtn = document.getElementById('sync-status-pill');
+            syncPillBtn.addEventListener('click', openSyncModalHandler);
+            syncPillBtn.addEventListener('touchend', openSyncModalHandler);
+
+            document.getElementById('close-sync-modal-btn').addEventListener('click', () => {
+                document.getElementById('sync-modal').style.display = 'none';
+            });
+
+            document.getElementById('sync-modal').addEventListener('click', (e) => {
+                if (e.target.id === 'sync-modal') {
+                    document.getElementById('sync-modal').style.display = 'none';
+                }
+            });
+
+            document.getElementById('save-custom-fb-config-btn').addEventListener('click', async () => {
+                const rawVal = document.getElementById('custom-fb-config-input').value.trim();
+                try {
+                    const cleaned = rawVal.replace(/^[^{]*/, '').replace(/[^}]*$/, '');
+                    const parsed = JSON.parse(cleaned);
+                    if (!parsed.apiKey || !parsed.projectId) {
+                        showToast('חסרים שדות apiKey או projectId בהגדרות', 'warning');
+                        return;
+                    }
+                    localStorage.setItem(CUSTOM_CLOUD_CFG_KEY, JSON.stringify(parsed));
+                    firebaseConfig = parsed;
+                    showToast('מתחבר לסנכרון החי...', 'info');
+                    await initCloudStorage();
+                    document.getElementById('sync-modal').style.display = 'none';
+                } catch (e) {
+                    showToast('פורמט הגדרות לא תקין (הדבק JSON תקני)', 'warning');
+                }
+            });
+
+            function copyTextToClipboardSafe(textToCopy) {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(textToCopy).catch(() => {
+                        const tempInput = document.createElement('textarea');
+                        tempInput.value = textToCopy;
+                        document.body.appendChild(tempInput);
+                        tempInput.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(tempInput);
+                    });
+                } else {
+                    const tempInput = document.createElement('textarea');
+                    tempInput.value = textToCopy;
+                    document.body.appendChild(tempInput);
+                    tempInput.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(tempInput);
+                }
+            }
+
+            document.getElementById('share-invite-link-btn').addEventListener('click', () => {
+                const baseUrl = window.location.href.split('#')[0];
+                const params = new URLSearchParams();
+                params.set('room', appId);
+                if (firebaseConfig) {
+                    try {
+                        params.set('cfg', btoa(unescape(encodeURIComponent(JSON.stringify(firebaseConfig)))));
+                    } catch (e) {}
+                }
+                const shareUrl = `${baseUrl}#${params.toString()}`;
+                copyTextToClipboardSafe(shareUrl);
+                showToast('הקישור הקבוע הועתק! שלח אותו והוא יפעל מיד בכרום');
+            });
+
+            document.getElementById('share-snapshot-link-btn').addEventListener('click', () => {
+                const baseUrl = window.location.href.split('#')[0];
+                const params = new URLSearchParams();
+                params.set('room', appId);
+                if (firebaseConfig) {
+                    try {
+                        params.set('cfg', btoa(unescape(encodeURIComponent(JSON.stringify(firebaseConfig)))));
+                    } catch (e) {}
+                }
+                if (state.items.length > 0) {
+                    try {
+                        params.set('data', btoa(unescape(encodeURIComponent(JSON.stringify(state.items)))));
+                    } catch (e) {}
+                }
+                const shareUrl = `${baseUrl}#${params.toString()}`;
+                copyTextToClipboardSafe(shareUrl);
+                showToast(`הקישור הועתק כולל ${state.items.length} כתובות ומתחמים שמורים!`);
+            });
+
+            // Satellite / Street Layer Toggle (2 states only; base map cities & street names always remain visible)
+            document.getElementById('toggle-layer-btn').addEventListener('click', () => {
+                if (!mapLoaded) return;
+                const icon = document.getElementById('layer-icon');
+                const label = document.getElementById('layer-label');
+
+                if (state.mapMode === 'street') {
+                    // Switch to Satellite (with permanent road numbers, street names & city labels)
+                    state.mapMode = 'satellite';
+                    map.setMaxZoom(17);
+                    if (map.getZoom() > 17) {
+                        map.easeTo({ zoom: 17, duration: 300 });
+                    }
+                    map.setLayoutProperty('street-layer', 'visibility', 'none');
+                    map.setLayoutProperty('satellite-layer', 'visibility', 'visible');
+                    map.setLayoutProperty('satellite-transport-layer', 'visibility', 'visible');
+                    map.setLayoutProperty('satellite-labels-layer', 'visibility', 'visible');
+                    icon.className = 'ph-bold ph-map-trifold text-xl text-amber-600';
+                    label.textContent = 'מפה';
+                    showToast('מצב תצלום לוויין + כבישים ורחובות', 'info');
+                } else {
+                    // Switch back to Street Map
+                    state.mapMode = 'street';
+                    map.setMaxZoom(18);
+                    map.setLayoutProperty('street-layer', 'visibility', 'visible');
+                    map.setLayoutProperty('satellite-layer', 'visibility', 'none');
+                    map.setLayoutProperty('satellite-transport-layer', 'visibility', 'none');
+                    map.setLayoutProperty('satellite-labels-layer', 'visibility', 'none');
+                    icon.className = 'ph-bold ph-globe-hemisphere-east text-xl text-blue-600';
+                    label.textContent = 'לוויין';
+                    showToast('מצב מפת רחובות', 'info');
+                }
+            });
+
+            // Toggle Permanent Labels on User's Added Items ONLY (never touches built-in map city/street labels)
+            // Toggle ALL User Additions (Names, Pins & Polygons) - never touches built-in map city/street labels
+            document.getElementById('toggle-labels-btn').addEventListener('click', () => {
+                state.showPermanentLabels = !state.showPermanentLabels;
+                const btn = document.getElementById('toggle-labels-btn');
+                const btnText = document.getElementById('labels-btn-text');
+                const btnIcon = document.getElementById('labels-icon');
+
+                btn.classList.toggle('bg-slate-900', state.showPermanentLabels);
+                btn.classList.toggle('text-white', state.showPermanentLabels);
+                btn.classList.toggle('border-slate-700', state.showPermanentLabels);
+
+                btn.classList.toggle('bg-white', !state.showPermanentLabels);
+                btn.classList.toggle('text-slate-900', !state.showPermanentLabels);
+                btn.classList.toggle('border-slate-300', !state.showPermanentLabels);
+
+                if (btnText) btnText.textContent = state.showPermanentLabels ? 'הוספות: פעיל' : 'הוספות: מוסתר';
+                if (btnIcon) {
+                    btnIcon.className = state.showPermanentLabels
+                        ? 'ph-bold ph-eye text-xl text-amber-400'
+                        : 'ph-bold ph-eye-slash text-xl text-slate-500';
+                }
+
+                // Also hide/show temporary shared & search markers added by the user
+                if (sharedPinMarker) {
+                    sharedPinMarker.getElement().style.display = state.showPermanentLabels ? '' : 'none';
+                }
+                if (tempSearchMarker) {
+                    tempSearchMarker.getElement().style.display = state.showPermanentLabels ? '' : 'none';
+                }
+
+                renderMapItems();
+                showToast(state.showPermanentLabels ? 'כל ההוספות שלך מוצגות על המפה' : 'כל ההוספות שלך (שמות, סימונים ומתחמים) הוסתרו', 'info');
+            });
+
+            // GPS Locate
+            document.getElementById('gps-locate-btn').addEventListener('click', () => {
+                if (!navigator.geolocation) {
+                    showToast('הדפדפן אינו תומך באיתור מיקום', 'warning');
+                    return;
+                }
+                showToast('מאתר את מיקומך...', 'info');
+                navigator.geolocation.getCurrentPosition((pos) => {
+                    const { latitude, longitude } = pos.coords;
+                    map.flyTo({ center: [longitude, latitude], zoom: 16.5, duration: 900 });
+
+                    if (gpsMarker) gpsMarker.remove();
+                    const el = document.createElement('div');
+                    el.className = 'w-5 h-5 rounded-full bg-blue-600 border-3 border-white shadow-lg ring-4 ring-blue-500/35';
+                    gpsMarker = new maplibregl.Marker({ element: el })
+                        .setLngLat([longitude, latitude])
+                        .addTo(map);
+                }, () => {
+                    showToast('לא ניתן היה לאתר מיקום. בדוק הרשאות GPS.', 'warning');
+                }, { enableHighAccuracy: true });
+            });
+
+            // Desktop Zoom
+            document.getElementById('zoom-in-btn').addEventListener('click', () => map && map.zoomIn());
+            document.getElementById('zoom-out-btn').addEventListener('click', () => map && map.zoomOut());
+
+            // Bottom Dock Actions
+            document.getElementById('add-center-point-btn').addEventListener('click', () => {
+                const center = map.getCenter();
+                openEditorModal({
+                    type: 'marker',
+                    latlng: { lat: center.lat, lng: center.lng }
+                });
+            });
+
+            document.getElementById('start-polygon-btn').addEventListener('click', startPolygonDrawing);
+
+            // Mark & Share Center Crosshair Location
+            document.getElementById('mark-and-share-btn').addEventListener('click', () => {
+                if (!map) return;
+                const center = map.getCenter();
+                placeSharedPinOnMap(center.lat, center.lng, 'מיקום מסומן', true);
+            });
+
+            // Share Location Modal Events
+            document.getElementById('close-share-loc-btn').addEventListener('click', closeShareLocationModal);
+            document.getElementById('share-loc-note-input').addEventListener('input', () => {
+                updateShareModalLinks();
+                if (currentSharedLocation) {
+                    const newLabel = document.getElementById('share-loc-note-input').value.trim() || 'מיקום מסומן';
+                    currentSharedLocation.label = newLabel;
+                }
+            });
+
+            document.getElementById('copy-shared-loc-btn').addEventListener('click', () => {
+                if (!currentSharedLocation) return;
+                const noteVal = document.getElementById('share-loc-note-input').value.trim();
+                const msg = buildShareLocationMessage(currentSharedLocation.lat, currentSharedLocation.lng, noteVal);
+                const tempInput = document.createElement('textarea');
+                tempInput.value = msg;
+                document.body.appendChild(tempInput);
+                tempInput.select();
+                document.execCommand('copy');
+                document.body.removeChild(tempInput);
+                showToast('המיקום וקישורי הניווט הועתקו לשליחה!');
+            });
+
+            document.getElementById('save-shared-loc-permanent-btn').addEventListener('click', () => {
+                if (!currentSharedLocation) return;
+                const loc = { ...currentSharedLocation };
+                const noteVal = document.getElementById('share-loc-note-input').value.trim();
+                closeShareLocationModal();
+                openEditorModal({
+                    type: 'marker',
+                    title: noteVal,
+                    latlng: { lat: loc.lat, lng: loc.lng }
+                });
+            });
+
+            // Polygon Drawing Controls
+            document.getElementById('draw-add-center-btn').addEventListener('click', () => {
+                const c = map.getCenter();
+                addDrawVertex({ lat: c.lat, lng: c.lng });
+            });
+            document.getElementById('draw-undo-btn').addEventListener('click', undoLastVertex);
+            document.getElementById('draw-finish-btn').addEventListener('click', finishPolygonDrawing);
+            document.getElementById('draw-cancel-btn').addEventListener('click', () => {
+                stopPolygonDrawing();
+                showToast('שרטוט המתחם בוטל', 'info');
+            });
+
+            // Editor Modal Events
+            document.getElementById('close-editor-modal-btn').addEventListener('click', closeEditorModal);
+            document.getElementById('cancel-editor-btn').addEventListener('click', closeEditorModal);
+
+            document.getElementById('reverse-geocode-btn').addEventListener('click', async () => {
+                if (!state.pendingCoords) return;
+                showToast('מאתר כתובת...', 'info');
+                const addr = await reverseGeocode(state.pendingCoords.lat, state.pendingCoords.lng);
+                document.getElementById('edit-address').value = addr;
+            });
+
+            document.getElementById('editor-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const id = document.getElementById('edit-item-id').value || ('item_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6));
+                const type = document.getElementById('edit-item-type').value;
+                const title = document.getElementById('edit-title').value.trim();
+                const address = document.getElementById('edit-address').value.trim();
+                const notes = document.getElementById('edit-notes').value.trim();
+                const icon = document.getElementById('edit-icon').value;
+
+                if (!title) return;
+
+                const existing = state.items.find(i => i.id === id);
+
+                const itemPayload = {
+                    id,
+                    type,
+                    title,
+                    address,
+                    notes,
+                    color: state.selectedColor,
+                    icon,
+                    updatedAt: Date.now()
+                };
+
+                if (type === 'polygon') {
+                    const pts = state.pendingPolygonPoints || (existing && existing.latlngs);
+                    const metrics = calculatePolygonMetrics(pts);
+                    itemPayload.latlngs = pts;
+                    itemPayload.areaSqm = metrics.sqm;
+                    itemPayload.dunam = metrics.dunam;
+                    itemPayload.perimeterM = metrics.perimeter;
+                } else {
+                    itemPayload.latlng = state.pendingCoords || (existing && existing.latlng);
+                }
+
+                // Close editor and show immediate confirmation banner before background cloud sync completes
+                closeEditorModal();
+                state.highlightedItemId = itemPayload.id;
+                showToast(type === 'polygon' ? `המתחם "${title}" נשמר ואושר קבוע במפה!` : `הכתובת "${title}" והמלל נשמרו ואושרו!`);
+
+                persistItem(itemPayload).then(() => {
+                    renderMapItems();
+                });
+            });
+
+            // Details Modal Events
+            document.getElementById('close-details-btn').addEventListener('click', closeDetailsModal);
+
+            document.getElementById('details-zoom-btn').addEventListener('click', () => {
+                if (!state.activeItem) return;
+                const target = state.activeItem;
+                closeDetailsModal();
+                focusOnSavedItem(target, false);
+            });
+
+            document.getElementById('details-share-loc-btn').addEventListener('click', () => {
+                if (!state.activeItem) return;
+                const coords = state.activeItem.type === 'polygon'
+                    ? getPolygonCenter(state.activeItem.latlngs)
+                    : state.activeItem.latlng;
+                const title = state.activeItem.title || 'מיקום שמור';
+                closeDetailsModal();
+                openShareLocationModal(coords.lat, coords.lng, title);
+            });
+
+            document.getElementById('details-edit-btn').addEventListener('click', () => {
+                if (!state.activeItem) return;
+                const itemToEdit = { ...state.activeItem };
+                closeDetailsModal();
+                openEditorModal(itemToEdit);
+            });
+
+            document.getElementById('details-delete-btn').addEventListener('click', () => {
+                if (!state.activeItem) return;
+                const target = state.activeItem;
+                askConfirmation(
+                    `מחיקת "${target.title}"`,
+                    'פעולה זו תמחק לצמיתות את המתחם והמלל השמור עליו. להמשיך?',
+                    async () => {
+                        closeDetailsModal();
+                        await removeItem(target.id);
+                        showToast('הפריט נמחק מהמפה', 'info');
+                    }
+                );
+            });
+
+            document.getElementById('copy-coords-btn').addEventListener('click', () => {
+                if (!state.activeItem) return;
+                const coords = state.activeItem.type === 'polygon'
+                    ? getPolygonCenter(state.activeItem.latlngs)
+                    : state.activeItem.latlng;
+                const text = `${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}`;
+
+                const tempInput = document.createElement('input');
+                tempInput.value = text;
+                document.body.appendChild(tempInput);
+                tempInput.select();
+                document.execCommand('copy');
+                document.body.removeChild(tempInput);
+                showToast('הקואורדינטות הועתקו ללוח');
+            });
+
+            // Sidebar Filtering & Tabs
+            document.getElementById('saved-filter-input').addEventListener('input', (e) => {
+                state.searchFilterText = e.target.value;
+                renderSidebarList();
+            });
+
+            document.querySelectorAll('.filter-tab-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    state.currentFilter = btn.getAttribute('data-filter');
+                    document.querySelectorAll('.filter-tab-btn').forEach(b => {
+                        b.classList.remove('bg-white', 'text-slate-950', 'shadow-sm');
+                        b.classList.add('text-slate-600');
+                    });
+                    btn.classList.add('bg-white', 'text-slate-950', 'shadow-sm');
+                    btn.classList.remove('text-slate-600');
+                    renderSidebarList();
+                });
+            });
+
+            // Export / Import Backup JSON
+            document.getElementById('export-json-btn').addEventListener('click', () => {
+                const dataStr = JSON.stringify(state.items, null, 2);
+                const blob = new Blob([dataStr], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `israel-map-backup-${new Date().toISOString().slice(0, 10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                showToast('קובץ הגיבוי הורד בהצלחה');
+            });
+
+            document.getElementById('import-json-input').addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = async (ev) => {
+                    try {
+                        const imported = JSON.parse(ev.target.result);
+                        if (Array.isArray(imported)) {
+                            for (const item of imported) {
+                                if (item && item.id && item.title) {
+                                    await persistItem(item);
+                                }
+                            }
+                            showToast(`יובאו ${imported.length} פריטים בהצלחה!`);
+                        }
+                    } catch (err) {
+                        showToast('קובץ לא תקין', 'warning');
+                    }
+                };
+                reader.readAsText(file);
+                e.target.value = '';
+            });
+        }
+
+        // ==========================================
+        // 11. BOOTSTRAP APPLICATION
+        // ==========================================
+        window.addEventListener('DOMContentLoaded', () => {
+            initAuthLockScreen();
+            initMap();
+            setupEventListeners();
+            initCloudStorage();
+
+            // Re-sync immediately whenever user returns to the mobile browser tab
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    forceSyncFromCloud(false);
+                }
+            });
+
+            // Periodic silent sync fallback so mobile Chrome never stays stale even if background stream pauses
+            setInterval(() => {
+                if (document.visibilityState === 'visible') {
+                    forceSyncFromCloud(false);
+                }
+            }, 4000);
+        });
+    </script>
+</body>
+</html>
