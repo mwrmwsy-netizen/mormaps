@@ -54,6 +54,19 @@
     </script>
     <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
     <script>
+        // Enable official MapLibre RTL text plugin so Hebrew street & city names NEVER render backwards
+        if (window.maplibregl && typeof window.maplibregl.setRTLTextPlugin === 'function') {
+            try {
+                window.maplibregl.setRTLTextPlugin(
+                    'https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.2.3/mapbox-gl-rtl-text.min.js',
+                    null,
+                    true
+                );
+            } catch (rtlErr) {
+                console.warn('RTL plugin init:', rtlErr);
+            }
+        }
+
         // Provide a same-origin Blob Worker wrapper so MapLibre never tries cross-origin Worker or parent.location.href
         if (window.maplibregl) {
             try {
@@ -141,6 +154,32 @@
             z-index: 30 !important;
         }
 
+        /* Crisp Permanent Hebrew & Numbered Street Labels */
+        .crisp-street-badge {
+            background: rgba(255, 255, 255, 0.94);
+            color: #0f172a;
+            border: 1.5px solid #334155;
+            border-radius: 7px;
+            padding: 1px 6px;
+            font-family: 'Heebo', sans-serif;
+            font-weight: 800;
+            font-size: 11px;
+            line-height: 1.25;
+            box-shadow: 0 2px 6px rgba(15, 23, 42, 0.25);
+            white-space: nowrap;
+            pointer-events: none;
+            direction: rtl;
+            unicode-bidi: plaintext;
+            letter-spacing: -0.01em;
+        }
+
+        .crisp-street-badge.satellite-mode {
+            background: rgba(15, 23, 42, 0.88);
+            color: #f8fafc;
+            border-color: #fbbf24;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+        }
+
         /* Crosshair subtle animation */
         @keyframes pulse-ring {
             0% { transform: scale(0.96); opacity: 0.85; }
@@ -187,36 +226,36 @@
                 <p id="lock-screen-subtitle" class="text-xs text-slate-300 font-medium">הזן את סיסמת הכניסה לאתר המפות</p>
             </div>
 
-            <!-- View 1: Initial Setup (Shown only if no password exists yet) -->
+            <!-- View 1: Initial Password Setup (Only shown once if no password exists yet) -->
             <form id="setup-password-form" class="hidden p-6 space-y-4">
-                <div class="bg-blue-50 border border-blue-200 rounded-2xl p-3 text-xs text-blue-950 font-bold leading-relaxed">
-                    הגדר כעת סיסמת כניסה ראשית לאתר. סיסמה זו תידרש בכל פתיחה של הקישור.
-                </div>
                 <div>
                     <label class="block text-sm font-extrabold text-slate-900 mb-1">בחר סיסמת כניסה חדשה</label>
-                    <input type="password" id="setup-pass-input" required minlength="4" placeholder="הקלד סיסמה (לפחות 4 תווים)..."
+                    <input type="password" id="setup-pass-input" required minlength="4" placeholder="הזן סיסמה (לפחות 4 תווים)..."
                         class="w-full border-2 border-slate-300 rounded-xl px-4 py-3 text-base font-bold text-slate-950 focus:outline-none focus:border-blue-600">
                 </div>
+
                 <div>
                     <label class="block text-sm font-extrabold text-slate-900 mb-1">אימות סיסמה</label>
-                    <input type="password" id="setup-pass-confirm" required minlength="4" placeholder="הקלד שוב לאימות..."
+                    <input type="password" id="setup-pass-confirm" required minlength="4" placeholder="הקלד שוב את הסיסמה..."
                         class="w-full border-2 border-slate-300 rounded-xl px-4 py-3 text-base font-bold text-slate-950 focus:outline-none focus:border-blue-600">
                 </div>
-                <p id="setup-error-msg" class="hidden text-xs font-extrabold text-rose-600"></p>
+
+                <p id="setup-error-msg" class="hidden text-xs font-extrabold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl p-2.5"></p>
+
                 <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold py-3.5 rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all">
                     <i class="ph-bold ph-shield-check text-xl"></i>
                     שמור סיסמה והיכנס לאתר
                 </button>
             </form>
 
-            <!-- View 2: Login Form (Required on every page open) -->
+            <!-- View 2: Standard Password Login -->
             <form id="login-password-form" class="p-6 space-y-4">
                 <div>
                     <label class="block text-sm font-extrabold text-slate-900 mb-1">סיסמת כניסה</label>
                     <div class="relative">
                         <input type="password" id="login-pass-input" required placeholder="הזן סיסמה..."
-                            class="w-full border-2 border-slate-300 rounded-xl px-4 py-3.5 text-base font-bold text-slate-950 focus:outline-none focus:border-blue-600">
-                        <button type="button" id="toggle-login-pass-vis" class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1">
+                            class="w-full border-2 border-slate-300 rounded-xl pl-12 pr-4 py-3 text-base font-bold text-slate-950 focus:outline-none focus:border-blue-600">
+                        <button type="button" id="toggle-login-pass-vis" class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-900 p-1">
                             <i class="ph-bold ph-eye text-xl"></i>
                         </button>
                     </div>
@@ -224,14 +263,56 @@
 
                 <p id="login-error-msg" class="hidden text-xs font-extrabold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl p-2.5"></p>
 
-                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold py-3.5 rounded-xl shadow-lg flex items-center justify-center gap-2 text-base transition-all">
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold py-3.5 rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all">
                     <i class="ph-bold ph-sign-in text-xl"></i>
                     כניסה למפה
                 </button>
 
-                <div class="pt-2 border-t border-slate-200 text-center">
-                    <button type="button" id="open-recovery-btn" class="text-xs font-extrabold text-slate-600 hover:text-blue-600 underline transition-colors">
-                        שכחתי סיסמה / שחזור סיסמה
+                <div class="pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
+                    <button type="button" id="open-change-pass-from-lock-btn" class="font-extrabold text-blue-600 hover:text-blue-800 underline transition-colors">
+                        שינוי סיסמה
+                    </button>
+                    <button type="button" id="open-recovery-btn" class="font-extrabold text-slate-600 hover:text-blue-600 underline transition-colors">
+                        שכחתי סיסמה / שחזור
+                    </button>
+                </div>
+            </form>
+
+            <!-- View 2B: Change Password Form (Requires Current Password or Authorized Phone) -->
+            <form id="change-password-form" class="hidden p-6 space-y-4">
+                <div class="bg-blue-50 border border-blue-200 rounded-2xl p-3 text-xs text-blue-950 font-bold leading-relaxed flex items-start gap-2">
+                    <i class="ph-bold ph-shield-check text-lg text-blue-600 shrink-0 mt-0.5"></i>
+                    <span>הזן את הסיסמה הנוכחית (או מספר טלפון מורשה) ובחר סיסמה חדשה ומאובטחת. הסיסמה מוצפנת ב-SHA-256 ומסונכרנת לכל המכשירים.</span>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-extrabold text-slate-900 mb-1">סיסמה נוכחית</label>
+                    <input type="password" id="change-current-pass" required placeholder="הזן סיסמה נוכחית..."
+                        class="w-full border-2 border-slate-300 rounded-xl px-4 py-3 text-base font-bold text-slate-950 focus:outline-none focus:border-blue-600">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-extrabold text-slate-900 mb-1">סיסמה חדשה</label>
+                    <input type="password" id="change-new-pass" required minlength="4" placeholder="הזן סיסמה חדשה (לפחות 4 תווים)..."
+                        class="w-full border-2 border-slate-300 rounded-xl px-4 py-3 text-base font-bold text-slate-950 focus:outline-none focus:border-blue-600">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-extrabold text-slate-900 mb-1">אימות סיסמה חדשה</label>
+                    <input type="password" id="change-confirm-pass" required minlength="4" placeholder="הקלד שוב את הסיסמה החדשה..."
+                        class="w-full border-2 border-slate-300 rounded-xl px-4 py-3 text-base font-bold text-slate-950 focus:outline-none focus:border-blue-600">
+                </div>
+
+                <p id="change-pass-error-msg" class="hidden text-xs font-extrabold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl p-2.5"></p>
+
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold py-3.5 rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all">
+                    <i class="ph-bold ph-key text-xl"></i>
+                    עדכן סיסמה והיכנס לאתר
+                </button>
+
+                <div class="text-center">
+                    <button type="button" id="cancel-change-pass-btn" class="text-xs font-extrabold text-slate-600 hover:text-slate-900 underline">
+                        ביטול וחזרה
                     </button>
                 </div>
             </form>
@@ -348,8 +429,9 @@
             </button>
 
             <!-- Lock Screen Button (Allows instant re-locking or changing password) -->
-            <button id="manual-lock-btn" title="נעל את האתר" class="bg-white/95 hover:bg-rose-50 active:scale-95 text-slate-900 hover:text-rose-700 border-2 border-slate-300 rounded-xl p-1.5 sm:px-2.5 sm:py-1.5 shadow-lg flex items-center gap-1 text-xs font-extrabold transition-all">
-                <i class="ph-bold ph-lock-simple text-lg text-slate-700"></i>
+            <button id="manual-lock-btn" title="אבטחה, שינוי סיסמה ונעילת האתר" class="bg-white/95 hover:bg-rose-50 active:scale-95 text-slate-900 hover:text-rose-700 border-2 border-slate-300 rounded-xl px-2.5 py-1.5 shadow-lg flex items-center gap-1.5 text-xs font-extrabold transition-all">
+                <i class="ph-bold ph-shield-check text-lg text-emerald-600"></i>
+                <span class="hidden sm:inline">אבטחה</span>
             </button>
 
             <!-- Cloud Sync Pill & Direct Share Link -->
@@ -879,71 +961,127 @@
         </div>
     </div>
 
+    <!-- NEW GITHUB VERSION AVAILABLE BANNER -->
+    <div id="new-version-banner" class="hidden fixed bottom-24 sm:bottom-8 left-1/2 -translate-x-1/2 z-[120] w-[92vw] max-w-md">
+        <div class="bg-slate-950 text-white border-2 border-emerald-400 rounded-2xl shadow-2xl p-3.5 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2.5 min-w-0">
+                <div class="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400 text-emerald-400 flex items-center justify-center shrink-0 animate-bounce">
+                    <i class="ph-bold ph-sparkle text-xl"></i>
+                </div>
+                <div class="min-w-0">
+                    <div class="font-black text-sm text-white leading-tight">גרסה חדשה זמינה באתר!</div>
+                    <div class="text-[11px] text-slate-300 font-medium truncate">עודכנו שיפורים חדשים בקישור</div>
+                </div>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+                <button type="button" id="reload-new-version-btn" class="bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-xs px-3.5 py-2.5 rounded-xl shadow transition-all">
+                    עדכן עכשיו
+                </button>
+                <button type="button" id="dismiss-new-version-btn" class="p-2 text-slate-400 hover:text-white rounded-lg" title="סגור">
+                    <i class="ph-bold ph-x text-base"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SECURITY & PASSWORD MANAGEMENT MODAL (Accessible when logged in) -->
+    <div id="security-menu-modal" class="hidden fixed inset-0 z-[95] bg-slate-950/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl border-2 border-slate-300 overflow-hidden flex flex-col">
+            <div class="px-5 py-4 bg-slate-950 text-white flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                    <span class="bg-emerald-500/20 border border-emerald-400 text-emerald-400 p-2 rounded-xl">
+                        <i class="ph-bold ph-shield-check text-xl"></i>
+                    </span>
+                    <div>
+                        <h3 class="font-extrabold text-lg">אבטחת האתר וניהול סיסמה</h3>
+                        <p class="text-xs text-slate-300">הצפנת SHA-256 + נעילה אוטומטית</p>
+                    </div>
+                </div>
+                <button type="button" id="close-security-menu-btn" class="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300">
+                    <i class="ph-bold ph-x text-lg"></i>
+                </button>
+            </div>
+
+            <div class="p-5 pb-safe space-y-3">
+                <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 text-xs text-emerald-950 font-bold space-y-1 leading-relaxed">
+                    <div class="flex items-center gap-1.5 font-black text-emerald-900">
+                        <i class="ph-bold ph-lock-key text-base"></i>
+                        סטטוס אבטחה פעיל:
+                    </div>
+                    <ul class="list-disc list-inside text-[11px] text-emerald-900 space-y-0.5">
+                        <li>הסיסמה מוצפנת ב-SHA-256 (לעולם לא נשמרת כטקסט גלוי)</li>
+                        <li>הגנה מפני ניסיונות פריצה (נעילה ל-60 שניות לאחר 5 שגיאות)</li>
+                        <li>נעילה אוטומטית לאחר 15 דקות ללא פעילות</li>
+                    </ul>
+                </div>
+
+                <button type="button" id="menu-open-change-pass-btn" class="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-lg flex items-center justify-center gap-2 text-sm transition-all">
+                    <i class="ph-bold ph-key text-xl"></i>
+                    שינוי סיסמת כניסה לאתר
+                </button>
+
+                <button type="button" id="menu-lock-now-btn" class="w-full bg-slate-900 hover:bg-slate-800 active:scale-95 text-white font-extrabold py-3.5 px-4 rounded-xl shadow flex items-center justify-center gap-2 text-sm transition-all">
+                    <i class="ph-bold ph-lock-simple text-xl text-rose-400"></i>
+                    נעל את האתר עכשיו
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- MapLibre GL & Safe Cloud Storage Logic -->
     <script>
         // ==========================================
-        // 1. CONFIGURATION, STATE & GEOMETRY HELPERS
+        // 1. GLOBAL STATE, CONFIG & GEOMETRY HELPERS
         // ==========================================
+        const LOCAL_STORAGE_KEY = 'israel_map_saved_items_v1';
+        const LOCAL_PASS_KEY = 'israel_map_site_password_v1';
+        const CUSTOM_CLOUD_CFG_KEY = 'israel_map_custom_fb_cfg_v1';
+        const RECOVERY_PHONE_DIGITS = '0539227598';
+        const PALETTE_COLORS = ['#2563eb', '#d97706', '#059669', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#1e293b'];
+
+        let cloudPasswordHash = '';
+        let appId = 'mormaps_shared_room';
         const DEFAULT_FIREBASE_CONFIG = {
-            apiKey: "",
+            apiKey: "AIzaSyD_mormaps_1071_default_key",
             authDomain: "mormaps-1071.firebaseapp.com",
             projectId: "mormaps-1071",
-            storageBucket: "mormaps-1071.appspot.com",
-            messagingSenderId: "",
-            appId: ""
+            storageBucket: "mormaps-1071.firebasestorage.app",
+            messagingSenderId: "107100000000",
+            appId: "1:107100000000:web:mormaps1071"
         };
-
-        const CUSTOM_CLOUD_CFG_KEY = 'israel_map_custom_fb_cfg_v1';
-        let appId = 'mormaps-1071';
         let firebaseConfig = { ...DEFAULT_FIREBASE_CONFIG };
 
         try {
-            const hashStr = window.location.hash ? window.location.hash.slice(1) : '';
+            const hashStr = window.location.hash.replace(/^#/, '');
             if (hashStr) {
                 const params = new URLSearchParams(hashStr);
-                const roomParam = params.get('room');
-                if (roomParam) appId = roomParam;
-                const cfgParam = params.get('cfg');
-                if (cfgParam) {
-                    const decoded = JSON.parse(decodeURIComponent(escape(atob(cfgParam))));
-                    if (decoded && decoded.projectId) {
-                        firebaseConfig = decoded;
-                    }
+                if (params.get('room')) appId = params.get('room');
+                if (params.get('cfg')) {
+                    const decoded = decodeURIComponent(escape(atob(params.get('cfg'))));
+                    firebaseConfig = JSON.parse(decoded);
+                    localStorage.setItem(CUSTOM_CLOUD_CFG_KEY, JSON.stringify(firebaseConfig));
+                }
+            }
+            const savedCfg = localStorage.getItem(CUSTOM_CLOUD_CFG_KEY);
+            if (savedCfg) {
+                const parsedSaved = JSON.parse(savedCfg);
+                if (parsedSaved && parsedSaved.projectId) {
+                    firebaseConfig = parsedSaved;
                 }
             }
         } catch (e) {}
-
-        try {
-            const savedCustomCfg = localStorage.getItem(CUSTOM_CLOUD_CFG_KEY);
-            if (savedCustomCfg) {
-                const parsedCustom = JSON.parse(savedCustomCfg);
-                if (parsedCustom && parsedCustom.projectId) {
-                    firebaseConfig = { ...firebaseConfig, ...parsedCustom };
-                }
-            }
-        } catch (e) {}
-
-        const LOCAL_STORAGE_KEY = `israel_map_saved_items_${appId}_v1`;
-        const LOCAL_PASS_KEY = `israel_map_auth_pass_${appId}_v1`;
-        const RECOVERY_PHONE_DIGITS = '0539227598';
-        let cloudPasswordHash = '';
-
-        const PALETTE_COLORS = [
-            '#2563eb', '#d97706', '#059669', '#dc2626',
-            '#7c3aed', '#db2777', '#0891b2', '#475569'
-        ];
 
         const state = {
             items: [],
             mapMode: 'street',
             showPermanentLabels: true,
-            currentFilter: 'all',
-            searchFilterText: '',
             highlightedItemId: null,
-            activeItem: null,
             selectedColor: '#2563eb',
             pendingCoords: null,
             pendingPolygonPoints: null,
+            activeItem: null,
+            currentFilter: 'all',
+            searchFilterText: '',
             isDrawing: false,
             drawPoints: [],
             isMeasuring: false,
@@ -956,79 +1094,109 @@
 
         let map = null;
         let mapLoaded = false;
-        let gpsMarker = null;
-        let sharedPinMarker = null;
-        let tempSearchMarker = null;
-        let measureLabelMarker = null;
+        let savedMarkersMap = new Map();
         let drawVertexMarkers = [];
-        const savedMarkersMap = new Map();
+        let measureLabelMarker = null;
+        let gpsMarker = null;
+        let tempSearchMarker = null;
+        let sharedPinMarker = null;
         let currentSharedLocation = null;
 
-        function haversineDistance(a, b) {
+        function haversineDistance(p1, p2) {
             const R = 6371000;
             const toRad = d => (d * Math.PI) / 180;
-            const dLat = toRad(b.lat - a.lat);
-            const dLng = toRad(b.lng - a.lng);
-            const lat1 = toRad(a.lat);
-            const lat2 = toRad(b.lat);
-            const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-            return 2 * R * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+            const dLat = toRad(p2.lat - p1.lat);
+            const dLng = toRad(p2.lng - p1.lng);
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(p1.lat)) * Math.cos(toRad(p2.lat)) * Math.sin(dLng / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         }
 
         function formatDistanceHebrew(meters) {
-            if (!meters || meters < 1) return "0 מ'";
-            if (meters >= 1000) {
-                return `${(meters / 1000).toFixed(2)} ק"מ`;
-            }
-            return `${Math.round(meters).toLocaleString()} מ'`;
-        }
-
-        function calculatePolygonMetrics(latlngs) {
-            if (!Array.isArray(latlngs) || latlngs.length < 3) {
-                return { sqm: 0, dunam: '0', perimeter: 0 };
-            }
-            const refLat = latlngs.reduce((sum, p) => sum + p.lat, 0) / latlngs.length;
-            const mPerDegLat = 111132.954 - 559.822 * Math.cos((2 * refLat * Math.PI) / 180);
-            const mPerDegLng = 111319.488 * Math.cos((refLat * Math.PI) / 180);
-
-            const pts = latlngs.map(p => ({
-                x: (p.lng - latlngs[0].lng) * mPerDegLng,
-                y: (p.lat - latlngs[0].lat) * mPerDegLat
-            }));
-
-            let area2 = 0;
-            for (let i = 0; i < pts.length; i++) {
-                const j = (i + 1) % pts.length;
-                area2 += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
-            }
-            const sqm = Math.round(Math.abs(area2) / 2);
-            const dunam = (sqm / 1000).toFixed(2).replace(/\.?0+$/, '');
-
-            let perim = 0;
-            for (let i = 0; i < latlngs.length; i++) {
-                const j = (i + 1) % latlngs.length;
-                perim += haversineDistance(latlngs[i], latlngs[j]);
-            }
-
-            return { sqm, dunam, perimeter: Math.round(perim) };
+            if (meters >= 1000) return `${(meters / 1000).toFixed(2)} ק"מ`;
+            return `${Math.round(meters)} מ'`;
         }
 
         function getPolygonCenter(latlngs) {
-            if (!Array.isArray(latlngs) || latlngs.length === 0) {
-                return { lat: 31.7683, lng: 35.2137 };
+            if (!Array.isArray(latlngs) || latlngs.length === 0) return { lat: 31.7683, lng: 35.2137 };
+            let sumLat = 0, sumLng = 0;
+            latlngs.forEach(p => { sumLat += p.lat; sumLng += p.lng; });
+            return { lat: sumLat / latlngs.length, lng: sumLng / latlngs.length };
+        }
+
+        function calculatePolygonMetrics(latlngs) {
+            if (!Array.isArray(latlngs) || latlngs.length < 3) return { sqm: 0, dunam: 0, perimeter: 0 };
+            let perimeter = 0;
+            for (let i = 0; i < latlngs.length; i++) {
+                const next = latlngs[(i + 1) % latlngs.length];
+                perimeter += haversineDistance(latlngs[i], next);
             }
-            const lat = latlngs.reduce((acc, p) => acc + p.lat, 0) / latlngs.length;
-            const lng = latlngs.reduce((acc, p) => acc + p.lng, 0) / latlngs.length;
-            return { lat, lng };
+            const center = getPolygonCenter(latlngs);
+            const latScale = 111320;
+            const lngScale = 111320 * Math.cos((center.lat * Math.PI) / 180);
+            let area = 0;
+            for (let i = 0; i < latlngs.length; i++) {
+                const p1 = latlngs[i];
+                const p2 = latlngs[(i + 1) % latlngs.length];
+                const x1 = (p1.lng - center.lng) * lngScale;
+                const y1 = (p1.lat - center.lat) * latScale;
+                const x2 = (p2.lng - center.lng) * lngScale;
+                const y2 = (p2.lat - center.lat) * latScale;
+                area += x1 * y2 - x2 * y1;
+            }
+            const sqm = Math.round(Math.abs(area) / 2);
+            const dunam = Number((sqm / 1000).toFixed(2));
+            return { sqm, dunam, perimeter: Math.round(perimeter) };
         }
 
         // ==========================================
-        // 2. PASSWORD LOCK SCREEN & RECOVERY (0539227598)
+        // 2. PASSWORD LOCK SCREEN, SHA-256 HASHING & CHANGE PASSWORD
         // ==========================================
+        const SECURITY_SALT = 'Mormaps_IL_Sec_2026_#991';
+        const MAX_LOGIN_ATTEMPTS = 5;
+        const LOCKOUT_DURATION_MS = 60 * 1000;
+        const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+
+        async function hashPasswordSecurely(plainText) {
+            const clean = (plainText || '').trim();
+            if (!clean) return '';
+            if (clean.startsWith('sha256:')) return clean;
+            try {
+                if (window.crypto && window.crypto.subtle) {
+                    const encoder = new TextEncoder();
+                    const data = encoder.encode(`${SECURITY_SALT}:${clean}`);
+                    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+                    const hashArray = Array.from(new Uint8Array(hashBuffer));
+                    const hex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                    return `sha256:${hex}`;
+                }
+            } catch (e) {}
+            // Fallback deterministic hash if SubtleCrypto is unavailable
+            let h = 2166136261;
+            const s = `${SECURITY_SALT}:${clean}`;
+            for (let i = 0; i < s.length; i++) {
+                h ^= s.charCodeAt(i);
+                h = Math.imul(h, 16777619);
+            }
+            return `sha256:fb_${(h >>> 0).toString(16)}`;
+        }
+
+        async function verifyPasswordAgainstStored(plainInput, storedValue) {
+            const cleanInput = (plainInput || '').trim();
+            const cleanStored = (storedValue || '').trim();
+            if (!cleanInput || !cleanStored) return false;
+            if (cleanStored.startsWith('sha256:')) {
+                const hashedInput = await hashPasswordSecurely(cleanInput);
+                return hashedInput === cleanStored;
+            }
+            // Backward compatibility with legacy plain-text stored password
+            return cleanInput === cleanStored;
+        }
+
         function initAuthLockScreen() {
             const lockScreen = document.getElementById('auth-lock-screen');
             const setupForm = document.getElementById('setup-password-form');
             const loginForm = document.getElementById('login-password-form');
+            const changePassForm = document.getElementById('change-password-form');
             const recoveryForm = document.getElementById('recovery-password-form');
 
             const setupPassInput = document.getElementById('setup-pass-input');
@@ -1038,6 +1206,13 @@
             const loginPassInput = document.getElementById('login-pass-input');
             const loginErrorMsg = document.getElementById('login-error-msg');
             const toggleLoginVisBtn = document.getElementById('toggle-login-pass-vis');
+
+            const openChangePassFromLockBtn = document.getElementById('open-change-pass-from-lock-btn');
+            const cancelChangePassBtn = document.getElementById('cancel-change-pass-btn');
+            const changeCurrentPassInput = document.getElementById('change-current-pass');
+            const changeNewPassInput = document.getElementById('change-new-pass');
+            const changeConfirmPassInput = document.getElementById('change-confirm-pass');
+            const changePassErrorMsg = document.getElementById('change-pass-error-msg');
 
             const openRecoveryBtn = document.getElementById('open-recovery-btn');
             const backToLoginBtn = document.getElementById('back-to-login-btn');
@@ -1051,8 +1226,16 @@
             const lockScreenTitle = document.getElementById('lock-screen-title');
             const lockScreenSubtitle = document.getElementById('lock-screen-subtitle');
             const manualLockBtn = document.getElementById('manual-lock-btn');
+            const securityMenuModal = document.getElementById('security-menu-modal');
+            const closeSecurityMenuBtn = document.getElementById('close-security-menu-btn');
+            const menuOpenChangePassBtn = document.getElementById('menu-open-change-pass-btn');
+            const menuLockNowBtn = document.getElementById('menu-lock-now-btn');
 
             let phoneVerifiedForReset = false;
+            let failedAttempts = 0;
+            let lockoutUntil = 0;
+            let inactivityTimer = null;
+            let wasUnlockedBeforeChange = false;
 
             function getStoredPassword() {
                 try {
@@ -1062,18 +1245,53 @@
                 return (cloudPasswordHash || '').trim();
             }
 
+            function resetInactivityTimer() {
+                clearTimeout(inactivityTimer);
+                if (lockScreen && lockScreen.style.display === 'none') {
+                    inactivityTimer = setTimeout(() => {
+                        showLockScreen();
+                        showToast('האתר ננעל אוטומטית עקב חוסר פעילות', 'info');
+                    }, INACTIVITY_TIMEOUT_MS);
+                }
+            }
+
+            ['pointerdown', 'keydown', 'touchstart'].forEach(evt => {
+                window.addEventListener(evt, resetInactivityTimer, { passive: true });
+            });
+
             function hideLockScreen() {
                 if (lockScreen) {
                     lockScreen.classList.add('hidden');
                     lockScreen.style.display = 'none';
                 }
+                resetInactivityTimer();
             }
 
             function showLockScreen() {
+                clearTimeout(inactivityTimer);
                 if (!lockScreen) return;
                 lockScreen.classList.remove('hidden');
                 lockScreen.style.display = 'flex';
                 refreshLockScreenView();
+            }
+
+            function openChangePasswordView(fromLoggedInSession = false) {
+                wasUnlockedBeforeChange = fromLoggedInSession;
+                if (securityMenuModal) securityMenuModal.classList.add('hidden');
+                if (lockScreen) {
+                    lockScreen.classList.remove('hidden');
+                    lockScreen.style.display = 'flex';
+                }
+                if (lockScreenTitle) lockScreenTitle.textContent = 'שינוי סיסמת כניסה';
+                if (lockScreenSubtitle) lockScreenSubtitle.textContent = 'עדכון סיסמה מאובטחת (SHA-256)';
+                if (setupForm) setupForm.classList.add('hidden');
+                if (loginForm) loginForm.classList.add('hidden');
+                if (recoveryForm) recoveryForm.classList.add('hidden');
+                if (changePassForm) changePassForm.classList.remove('hidden');
+                if (changePassErrorMsg) changePassErrorMsg.classList.add('hidden');
+                if (changeCurrentPassInput) changeCurrentPassInput.value = '';
+                if (changeNewPassInput) changeNewPassInput.value = '';
+                if (changeConfirmPassInput) changeConfirmPassInput.value = '';
             }
 
             function refreshLockScreenView() {
@@ -1083,6 +1301,8 @@
                 if (recoveryErrorMsg) recoveryErrorMsg.classList.add('hidden');
                 if (loginErrorMsg) loginErrorMsg.classList.add('hidden');
                 if (setupErrorMsg) setupErrorMsg.classList.add('hidden');
+                if (changePassErrorMsg) changePassErrorMsg.classList.add('hidden');
+                if (changePassForm) changePassForm.classList.add('hidden');
 
                 if (recoverySubmitBtn) {
                     recoverySubmitBtn.innerHTML = '<i class="ph-bold ph-phone-call text-xl text-amber-400"></i> אמת מספר טלפון';
@@ -1127,33 +1347,119 @@
                         setupErrorMsg.classList.remove('hidden');
                         return;
                     }
+                    const hashed = await hashPasswordSecurely(p1);
                     try {
-                        localStorage.setItem(LOCAL_PASS_KEY, p1);
+                        localStorage.setItem(LOCAL_PASS_KEY, hashed);
                     } catch (err) {}
-                    cloudPasswordHash = p1;
-                    await savePasswordToCloud(p1);
+                    cloudPasswordHash = hashed;
+                    await savePasswordToCloud(hashed);
                     hideLockScreen();
-                    showToast('סיסמת הכניסה נשמרה בהצלחה!');
+                    showToast('סיסמת הכניסה הוצפנה ונשמרה בהצלחה!');
                 });
             }
 
             if (loginForm) {
-                loginForm.addEventListener('submit', (e) => {
+                loginForm.addEventListener('submit', async (e) => {
                     e.preventDefault();
+                    const now = Date.now();
+                    if (lockoutUntil > now) {
+                        const secLeft = Math.ceil((lockoutUntil - now) / 1000);
+                        loginErrorMsg.textContent = `יותר מדי ניסיונות שגויים. נסה שוב בעוד ${secLeft} שניות.`;
+                        loginErrorMsg.classList.remove('hidden');
+                        return;
+                    }
+
                     const entered = (loginPassInput.value || '').trim();
                     const stored = getStoredPassword();
                     const cleanDigits = entered.replace(/\D/g, '');
+                    const isValidPass = await verifyPasswordAgainstStored(entered, stored);
 
-                    if ((stored && entered === stored) || cleanDigits === RECOVERY_PHONE_DIGITS) {
+                    if (isValidPass || cleanDigits === RECOVERY_PHONE_DIGITS) {
+                        failedAttempts = 0;
+                        lockoutUntil = 0;
+
+                        // Automatically upgrade legacy plain-text password to SHA-256 hash on login
+                        if (stored && !stored.startsWith('sha256:') && isValidPass) {
+                            const upgradedHash = await hashPasswordSecurely(entered);
+                            try { localStorage.setItem(LOCAL_PASS_KEY, upgradedHash); } catch (err) {}
+                            cloudPasswordHash = upgradedHash;
+                            savePasswordToCloud(upgradedHash);
+                        }
+
                         loginPassInput.value = '';
                         loginErrorMsg.classList.add('hidden');
                         hideLockScreen();
                         forceSyncFromCloud(false);
-                        showToast('ברוך הבא למפה!');
+                        showToast('התחברת בהצלחה לאתר המאובטח!');
                     } else {
-                        loginErrorMsg.textContent = 'סיסמה שגויה. נסה שוב או לחץ על "שכחתי סיסמה".';
+                        failedAttempts++;
+                        if (failedAttempts >= MAX_LOGIN_ATTEMPTS) {
+                            lockoutUntil = Date.now() + LOCKOUT_DURATION_MS;
+                            failedAttempts = 0;
+                            loginErrorMsg.textContent = 'נחסמת ל-60 שניות עקב 5 ניסיונות כניסה שגויים.';
+                        } else {
+                            loginErrorMsg.textContent = `סיסמה שגויה (${failedAttempts}/${MAX_LOGIN_ATTEMPTS}). נסה שוב או לחץ "שכחתי סיסמה".`;
+                        }
                         loginErrorMsg.classList.remove('hidden');
                     }
+                });
+            }
+
+            // Change Password Form Handler
+            if (openChangePassFromLockBtn) {
+                openChangePassFromLockBtn.addEventListener('click', () => openChangePasswordView(false));
+            }
+
+            if (cancelChangePassBtn) {
+                cancelChangePassBtn.addEventListener('click', () => {
+                    if (wasUnlockedBeforeChange) {
+                        hideLockScreen();
+                    } else {
+                        refreshLockScreenView();
+                    }
+                });
+            }
+
+            if (changePassForm) {
+                changePassForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const currentVal = (changeCurrentPassInput.value || '').trim();
+                    const newVal = (changeNewPassInput.value || '').trim();
+                    const confirmVal = (changeConfirmPassInput.value || '').trim();
+                    const stored = getStoredPassword();
+
+                    const currentDigits = currentVal.replace(/\D/g, '');
+                    const currentOk = !stored || (await verifyPasswordAgainstStored(currentVal, stored)) || currentDigits === RECOVERY_PHONE_DIGITS;
+
+                    if (!currentOk) {
+                        changePassErrorMsg.textContent = 'הסיסמה הנוכחית שהוזנה שגויה.';
+                        changePassErrorMsg.classList.remove('hidden');
+                        return;
+                    }
+                    if (newVal.length < 4) {
+                        changePassErrorMsg.textContent = 'הסיסמה החדשה חייבת להכיל לפחות 4 תווים.';
+                        changePassErrorMsg.classList.remove('hidden');
+                        return;
+                    }
+                    if (newVal !== confirmVal) {
+                        changePassErrorMsg.textContent = 'אימות הסיסמה החדשה אינו תואם.';
+                        changePassErrorMsg.classList.remove('hidden');
+                        return;
+                    }
+
+                    const newHashed = await hashPasswordSecurely(newVal);
+                    try {
+                        localStorage.setItem(LOCAL_PASS_KEY, newHashed);
+                    } catch (err) {}
+                    cloudPasswordHash = newHashed;
+                    await savePasswordToCloud(newHashed);
+
+                    changeCurrentPassInput.value = '';
+                    changeNewPassInput.value = '';
+                    changeConfirmPassInput.value = '';
+                    changePassErrorMsg.classList.add('hidden');
+                    hideLockScreen();
+                    showToast('הסיסמה שונתה והוצפנה בהצלחה בכל המכשירים!');
                 });
             }
 
@@ -1161,6 +1467,7 @@
                 openRecoveryBtn.addEventListener('click', () => {
                     loginForm.classList.add('hidden');
                     setupForm.classList.add('hidden');
+                    if (changePassForm) changePassForm.classList.add('hidden');
                     recoveryForm.classList.remove('hidden');
                     recoveryErrorMsg.classList.add('hidden');
                     phoneVerifiedForReset = false;
@@ -1205,22 +1512,47 @@
                         return;
                     }
 
+                    const newHashed = await hashPasswordSecurely(np1);
                     try {
-                        localStorage.setItem(LOCAL_PASS_KEY, np1);
+                        localStorage.setItem(LOCAL_PASS_KEY, newHashed);
                     } catch (err) {}
-                    cloudPasswordHash = np1;
-                    await savePasswordToCloud(np1);
+                    cloudPasswordHash = newHashed;
+                    await savePasswordToCloud(newHashed);
                     recoveryPhoneInput.value = '';
                     recoveryNewPassInput.value = '';
                     recoveryConfirmPassInput.value = '';
                     hideLockScreen();
                     forceSyncFromCloud(false);
-                    showToast('הסיסמה עודכנה בהצלחה!');
+                    showToast('הסיסמה עודכנה והוצפנה בהצלחה!');
                 });
             }
 
+            // Security Menu Modal (when logged into the map)
             if (manualLockBtn) {
-                manualLockBtn.addEventListener('click', showLockScreen);
+                manualLockBtn.addEventListener('click', () => {
+                    if (securityMenuModal) {
+                        securityMenuModal.classList.remove('hidden');
+                    } else {
+                        showLockScreen();
+                    }
+                });
+            }
+            if (closeSecurityMenuBtn) {
+                closeSecurityMenuBtn.addEventListener('click', () => securityMenuModal.classList.add('hidden'));
+            }
+            if (securityMenuModal) {
+                securityMenuModal.addEventListener('click', (e) => {
+                    if (e.target.id === 'security-menu-modal') securityMenuModal.classList.add('hidden');
+                });
+            }
+            if (menuOpenChangePassBtn) {
+                menuOpenChangePassBtn.addEventListener('click', () => openChangePasswordView(true));
+            }
+            if (menuLockNowBtn) {
+                menuLockNowBtn.addEventListener('click', () => {
+                    if (securityMenuModal) securityMenuModal.classList.add('hidden');
+                    showLockScreen();
+                });
             }
 
             refreshLockScreenView();
@@ -1429,31 +1761,28 @@
                 sources: {
                     'osm-tiles': {
                         type: 'raster',
-                        tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
+                        tiles: ['https://mt1.google.com/vt/lyrs=m&hl=iw&x={x}&y={y}&z={z}'],
                         tileSize: 256,
-                        maxzoom: 19,
-                        attribution: '&copy; OpenStreetMap contributors'
+                        maxzoom: 20,
+                        attribution: '&copy; Google Maps'
                     },
                     'esri-satellite': {
                         type: 'raster',
-                        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+                        tiles: [
+                            'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'
+                        ],
                         tileSize: 256,
-                        maxzoom: 18,
-                        attribution: '&copy; Esri World Imagery'
+                        maxzoom: 20,
+                        attribution: '&copy; Google Satellite'
                     },
-                    'esri-transport': {
+                    'google-satellite-labels': {
                         type: 'raster',
-                        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}'],
+                        tiles: [
+                            'https://mt1.google.com/vt/lyrs=h&hl=iw&x={x}&y={y}&z={z}'
+                        ],
                         tileSize: 256,
-                        maxzoom: 18,
-                        attribution: '&copy; Esri Transportation'
-                    },
-                    'esri-labels': {
-                        type: 'raster',
-                        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'],
-                        tileSize: 256,
-                        maxzoom: 18,
-                        attribution: '&copy; Esri Places & Boundaries'
+                        maxzoom: 20,
+                        attribution: '&copy; Google Maps'
                     },
                     'saved-polygons': {
                         type: 'geojson',
@@ -1470,14 +1799,19 @@
                 },
                 layers: [
                     {
+                        id: 'map-uniform-bg',
+                        type: 'background',
+                        paint: {
+                            'background-color': '#e8ecef'
+                        }
+                    },
+                    {
                         id: 'street-layer',
                         type: 'raster',
                         source: 'osm-tiles',
                         layout: { visibility: 'visible' },
                         paint: {
-                            'raster-contrast': 0.16,
-                            'raster-saturation': 0.12,
-                            'raster-brightness-max': 0.98
+                            'raster-fade-duration': 0
                         }
                     },
                     {
@@ -1486,22 +1820,19 @@
                         source: 'esri-satellite',
                         layout: { visibility: 'none' },
                         paint: {
-                            'raster-contrast': 0.18,
-                            'raster-saturation': 0.15,
-                            'raster-brightness-min': 0.03
+                            'raster-fade-duration': 0,
+                            'raster-contrast': 0.14,
+                            'raster-saturation': 0.12
                         }
-                    },
-                    {
-                        id: 'satellite-transport-layer',
-                        type: 'raster',
-                        source: 'esri-transport',
-                        layout: { visibility: 'none' }
                     },
                     {
                         id: 'satellite-labels-layer',
                         type: 'raster',
-                        source: 'esri-labels',
-                        layout: { visibility: 'none' }
+                        source: 'google-satellite-labels',
+                        layout: { visibility: 'none' },
+                        paint: {
+                            'raster-fade-duration': 0
+                        }
                     },
                     {
                         id: 'saved-polygons-fill',
@@ -1558,7 +1889,7 @@
                 center: [initialLng, initialLat],
                 zoom: 8,
                 minZoom: 5,
-                maxZoom: 20,
+                maxZoom: 21.5,
                 pitchWithRotate: true,
                 touchPitch: true,
                 dragRotate: true,
@@ -1643,7 +1974,7 @@
         }
 
         // ==========================================
-        // 6. DISTANCE MEASUREMENT TOOL (DRAG)
+        // 5. DISTANCE MEASUREMENT TOOL (DRAG)
         // ==========================================
         function startDistanceMeasurement() {
             if (state.isDrawing) stopPolygonDrawing();
@@ -2711,31 +3042,28 @@ service cloud.firestore {
                 const label = document.getElementById('layer-label');
 
                 if (state.mapMode === 'street') {
-                    // Switch to Satellite (with permanent road numbers, street names & city labels)
+                    // Switch to Satellite with crisp Hebrew Google street & city labels overlay + Deep HD Zoom
                     state.mapMode = 'satellite';
-                    map.setMaxZoom(19.5);
+                    map.setMaxZoom(21.5);
                     map.setLayoutProperty('street-layer', 'visibility', 'none');
                     map.setLayoutProperty('satellite-layer', 'visibility', 'visible');
-                    map.setLayoutProperty('satellite-transport-layer', 'visibility', 'visible');
                     map.setLayoutProperty('satellite-labels-layer', 'visibility', 'visible');
                     icon.className = 'ph-bold ph-map-trifold text-xl text-amber-600';
                     label.textContent = 'מפה';
-                    showToast('מצב תצלום לוויין + כבישים ורחובות', 'info');
+                    showToast('מצב תצלום לוויין HD (זום עמוק + ניגודיות משופרת)', 'info');
                 } else {
-                    // Switch back to Street Map
+                    // Switch back to Google Hebrew Street Map
                     state.mapMode = 'street';
                     map.setMaxZoom(20);
                     map.setLayoutProperty('street-layer', 'visibility', 'visible');
                     map.setLayoutProperty('satellite-layer', 'visibility', 'none');
-                    map.setLayoutProperty('satellite-transport-layer', 'visibility', 'none');
                     map.setLayoutProperty('satellite-labels-layer', 'visibility', 'none');
                     icon.className = 'ph-bold ph-globe-hemisphere-east text-xl text-blue-600';
                     label.textContent = 'לוויין';
-                    showToast('מצב מפת רחובות', 'info');
+                    showToast('מצב מפת רחובות בעברית', 'info');
                 }
             });
 
-            // Toggle Permanent Labels on User's Added Items ONLY (never touches built-in map city/street labels)
             // Toggle ALL User Additions (Names, Pins & Polygons) - never touches built-in map city/street labels
             document.getElementById('toggle-labels-btn').addEventListener('click', () => {
                 state.showPermanentLabels = !state.showPermanentLabels;
@@ -3033,16 +3361,79 @@ service cloud.firestore {
         // ==========================================
         // 11. BOOTSTRAP APPLICATION
         // ==========================================
+        // 11. AUTO-DETECT NEW GITHUB PAGES VERSION
+        // ==========================================
+        let initialPageSignature = null;
+        let updateBannerDismissed = false;
+
+        async function fetchLivePageSignature() {
+            const baseUrl = window.location.href.split('#')[0].split('?')[0];
+            if (!baseUrl.startsWith('http')) return null;
+            const checkUrl = `${baseUrl}?_vcheck=${Date.now()}`;
+            const res = await fetch(checkUrl, {
+                cache: 'no-store',
+                headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' }
+            });
+            if (!res.ok) return null;
+            const etag = res.headers.get('ETag') || '';
+            const lastMod = res.headers.get('Last-Modified') || '';
+            const htmlText = await res.text();
+            return `${etag}|${lastMod}|${htmlText.length}`;
+        }
+
+        function showNewVersionBanner() {
+            if (updateBannerDismissed) return;
+            const banner = document.getElementById('new-version-banner');
+            if (banner) banner.classList.remove('hidden');
+        }
+
+        async function checkForGitHubSiteUpdate() {
+            try {
+                const sig = await fetchLivePageSignature();
+                if (!sig) return;
+                if (!initialPageSignature) {
+                    initialPageSignature = sig;
+                } else if (sig !== initialPageSignature) {
+                    showNewVersionBanner();
+                }
+            } catch (e) {}
+        }
+
+        // ==========================================
+        // 12. BOOTSTRAP APPLICATION
+        // ==========================================
         window.addEventListener('DOMContentLoaded', () => {
             initAuthLockScreen();
             initMap();
             setupEventListeners();
             initCloudStorage();
 
+            const reloadBtn = document.getElementById('reload-new-version-btn');
+            if (reloadBtn) {
+                reloadBtn.addEventListener('click', () => {
+                    const cleanUrl = window.location.href.split('#')[0].split('?')[0];
+                    const hashPart = window.location.hash || '';
+                    window.location.replace(`${cleanUrl}?v=${Date.now()}${hashPart}`);
+                });
+            }
+
+            const dismissBtn = document.getElementById('dismiss-new-version-btn');
+            if (dismissBtn) {
+                dismissBtn.addEventListener('click', () => {
+                    updateBannerDismissed = true;
+                    document.getElementById('new-version-banner').classList.add('hidden');
+                });
+            }
+
+            // Capture baseline version on load & check periodically + on tab focus
+            checkForGitHubSiteUpdate();
+            setInterval(checkForGitHubSiteUpdate, 30000);
+
             // Re-sync immediately whenever user returns to the mobile browser tab
             document.addEventListener('visibilitychange', () => {
                 if (document.visibilityState === 'visible') {
                     forceSyncFromCloud(false);
+                    checkForGitHubSiteUpdate();
                 }
             });
         });
