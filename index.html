@@ -190,6 +190,15 @@
             animation: pulse-ring 2.2s infinite ease-in-out;
         }
 
+        /* Modern live GPS beacon animation */
+        @keyframes gps-radar {
+            0% { transform: scale(0.65); opacity: 0.75; }
+            100% { transform: scale(2.1); opacity: 0; }
+        }
+        .gps-beacon-ring {
+            animation: gps-radar 2.1s infinite cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
         /* Safe area padding for modern phones */
         .pb-safe {
             padding-bottom: max(1rem, env(safe-area-inset-bottom));
@@ -1170,7 +1179,6 @@
                     return `sha256:${hex}`;
                 }
             } catch (e) {}
-            // Fallback deterministic hash if SubtleCrypto is unavailable
             let h = 2166136261;
             const s = `${SECURITY_SALT}:${clean}`;
             for (let i = 0; i < s.length; i++) {
@@ -1188,7 +1196,6 @@
                 const hashedInput = await hashPasswordSecurely(cleanInput);
                 return hashedInput === cleanStored;
             }
-            // Backward compatibility with legacy plain-text stored password
             return cleanInput === cleanStored;
         }
 
@@ -1378,7 +1385,6 @@
                         failedAttempts = 0;
                         lockoutUntil = 0;
 
-                        // Automatically upgrade legacy plain-text password to SHA-256 hash on login
                         if (stored && !stored.startsWith('sha256:') && isValidPass) {
                             const upgradedHash = await hashPasswordSecurely(entered);
                             try { localStorage.setItem(LOCAL_PASS_KEY, upgradedHash); } catch (err) {}
@@ -1405,7 +1411,6 @@
                 });
             }
 
-            // Change Password Form Handler
             if (openChangePassFromLockBtn) {
                 openChangePassFromLockBtn.addEventListener('click', () => openChangePasswordView(false));
             }
@@ -1527,7 +1532,6 @@
                 });
             }
 
-            // Security Menu Modal (when logged into the map)
             if (manualLockBtn) {
                 manualLockBtn.addEventListener('click', () => {
                     if (securityMenuModal) {
@@ -1919,7 +1923,6 @@
             map.on('move', updateCenterAndCompass);
             map.on('rotate', updateCenterAndCompass);
 
-            // Drag-to-measure pointer/touch events
             const canvas = map.getCanvas();
             canvas.addEventListener('pointerdown', (e) => {
                 if (!state.isMeasuring) return;
@@ -1953,7 +1956,6 @@
                     return;
                 }
 
-                // Check if user clicked inside a saved polygon layer
                 const hits = map.queryRenderedFeatures(e.point, {
                     layers: ['saved-polygons-fill', 'saved-polygons-outline']
                 });
@@ -2494,16 +2496,85 @@
         }
 
         // ==========================================
-        // UNIFIED SEARCH (Saved Polygons + Google Maps Coords + Fuzzy Israel Addresses)
+        // UNIFIED SEARCH (Saved Polygons + Google Maps Links/Coords + Deduplicated Israel Settlements)
         // ==========================================
         let searchDebounceTimer = null;
 
-        // Parse Google Maps coordinates in DMS (e.g. 32°43'10.1"N 35°18'16.0"E), Decimal, or Google Maps URLs
+        // Built-in instant Israeli cities & settlements gazetteer (guarantees instant 1-result match for Nazareth, Basmat Tab'un, etc.)
+        const ISRAEL_SETTLEMENTS_GAZETTEER = [
+            { name: 'נצרת', fullName: 'נצרת, מחוז הצפון, ישראל', lat: 32.6996, lng: 35.3035, aliases: ['נצרת', 'עיר נצרת', 'נצרת עיר'] },
+            { name: 'נוף הגליל', fullName: 'נוף הגליל (נצרת עילית), מחוז הצפון, ישראל', lat: 32.7081, lng: 35.3247, aliases: ['נוף הגליל', 'נצרת עילית'] },
+            { name: 'בסמת טבעון', fullName: 'בסמת טבעון, מחוז הצפון, ישראל', lat: 32.7383, lng: 35.1578, aliases: ['בסמת טבעון', 'בסמת טבעון מועצה'] },
+            { name: 'ירושלים', fullName: 'ירושלים, מחוז ירושלים, ישראל', lat: 31.7683, lng: 35.2137, aliases: ['ירושלים'] },
+            { name: 'תל אביב - יפו', fullName: 'תל אביב - יפו, מחוז תל אביב, ישראל', lat: 32.0853, lng: 34.7818, aliases: ['תל אביב', 'תל אביב יפו', 'תל אביב-יפו', 'יפו'] },
+            { name: 'חיפה', fullName: 'חיפה, מחוז חיפה, ישראל', lat: 32.7940, lng: 34.9896, aliases: ['חיפה'] },
+            { name: 'באר שבע', fullName: 'באר שבע, מחוז הדרום, ישראל', lat: 31.2530, lng: 34.7915, aliases: ['באר שבע'] },
+            { name: 'עפולה', fullName: 'עפולה, מחוז הצפון, ישראל', lat: 32.6105, lng: 35.2879, aliases: ['עפולה'] },
+            { name: 'בית שאן', fullName: 'בית שאן, מחוז הצפון, ישראל', lat: 32.4972, lng: 35.4973, aliases: ['בית שאן'] },
+            { name: 'טבריה', fullName: 'טבריה, מחוז הצפון, ישראל', lat: 32.7922, lng: 35.5312, aliases: ['טבריה'] },
+            { name: 'צפת', fullName: 'צפת, מחוז הצפון, ישראל', lat: 32.9646, lng: 35.4960, aliases: ['צפת'] },
+            { name: 'עכו', fullName: 'עכו, מחוז הצפון, ישראל', lat: 32.9278, lng: 35.0818, aliases: ['עכו'] },
+            { name: 'נהריה', fullName: 'נהריה, מחוז הצפון, ישראל', lat: 33.0089, lng: 35.0981, aliases: ['נהריה'] },
+            { name: 'כרמיאל', fullName: 'כרמיאל, מחוז הצפון, ישראל', lat: 32.9136, lng: 35.2961, aliases: ['כרמיאל'] },
+            { name: 'מגדל העמק', fullName: 'מגדל העמק, מחוז הצפון, ישראל', lat: 32.6714, lng: 35.2406, aliases: ['מגדל העמק'] },
+            { name: 'יקנעם עילית', fullName: 'יקנעם עילית, מחוז הצפון, ישראל', lat: 32.6594, lng: 35.1100, aliases: ['יקנעם', 'יקנעם עילית'] },
+            { name: 'קריית שמונה', fullName: 'קריית שמונה, מחוז הצפון, ישראל', lat: 33.2073, lng: 35.5721, aliases: ['קריית שמונה', 'קרית שמונה'] },
+            { name: 'שפרעם', fullName: 'שפרעם, מחוז הצפון, ישראל', lat: 32.8056, lng: 35.1694, aliases: ['שפרעם'] },
+            { name: 'סח\'נין', fullName: 'סח\'נין, מחוז הצפון, ישראל', lat: 32.8647, lng: 35.2972, aliases: ['סחנין', 'סח\'נין'] },
+            { name: 'טמרה', fullName: 'טמרה, מחוז הצפון, ישראל', lat: 32.8536, lng: 35.1978, aliases: ['טמרה'] },
+            { name: 'אום אל-פחם', fullName: 'אום אל-פחם, מחוז חיפה, ישראל', lat: 32.5173, lng: 35.1535, aliases: ['אום אל פחם', 'אום אל-פחם'] },
+            { name: 'טייבה', fullName: 'טייבה, מחוז המרכז, ישראל', lat: 32.2662, lng: 35.0089, aliases: ['טייבה'] },
+            { name: 'טירה', fullName: 'טירה, מחוז המרכז, ישראל', lat: 32.2341, lng: 34.9502, aliases: ['טירה'] },
+            { name: 'כפר קאסם', fullName: 'כפר קאסם, מחוז המרכז, ישראל', lat: 32.1141, lng: 34.9762, aliases: ['כפר קאסם'] },
+            { name: 'רהט', fullName: 'רהט, מחוז הדרום, ישראל', lat: 31.3925, lng: 34.7544, aliases: ['רהט'] },
+            { name: 'נתניה', fullName: 'נתניה, מחוז המרכז, ישראל', lat: 32.3215, lng: 34.8532, aliases: ['נתניה'] },
+            { name: 'חדרה', fullName: 'חדרה, מחוז חיפה, ישראל', lat: 32.4340, lng: 34.9197, aliases: ['חדרה'] },
+            { name: 'פתח תקווה', fullName: 'פתח תקווה, מחוז המרכז, ישראל', lat: 32.0840, lng: 34.8878, aliases: ['פתח תקווה', 'פתח תקוה'] },
+            { name: 'ראשון לציון', fullName: 'ראשון לציון, מחוז המרכז, ישראל', lat: 31.9730, lng: 34.7925, aliases: ['ראשון לציון'] },
+            { name: 'אשדוד', fullName: 'אשדוד, מחוז הדרום, ישראל', lat: 31.8044, lng: 34.6553, aliases: ['אשדוד'] },
+            { name: 'אשקלון', fullName: 'אשקלון, מחוז הדרום, ישראל', lat: 31.6688, lng: 34.5743, aliases: ['אשקלון'] },
+            { name: 'אילת', fullName: 'אילת, מחוז הדרום, ישראל', lat: 29.5577, lng: 34.9519, aliases: ['אילת'] }
+        ];
+
+        function normalizeSettlementTitle(raw) {
+            return String(raw || '')
+                .replace(/["'׳״\-–—]/g, ' ')
+                .replace(/\b(מועצה מקומית|עיריית|עיר|כפר|יישוב|מחוז|ישראל)\b/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        function matchGazetteerSettlement(query) {
+            const cleanQ = normalizeSettlementTitle(query);
+            if (!cleanQ) return null;
+            return ISRAEL_SETTLEMENTS_GAZETTEER.find(s =>
+                normalizeSettlementTitle(s.name) === cleanQ ||
+                s.aliases.some(a => normalizeSettlementTitle(a) === cleanQ)
+            ) || null;
+        }
+
+        // Parse Google Maps coordinates in DMS, Exact Pin (!3d!4d), Full Google Maps URLs, or Decimal pairs
         function parseGoogleMapsCoordinates(input) {
             if (!input) return null;
-            const trimmed = input.trim();
+            let trimmed = input.trim();
+            try {
+                if (trimmed.includes('%')) {
+                    trimmed = decodeURIComponent(trimmed);
+                }
+            } catch (e) {}
 
-            // 1. DMS format: 32°43'10.1"N 35°18'16.0"E
+            // 1. Google Maps exact pin data parameter (!3d<lat>!4d<lng>) - most accurate pin coordinate in Google Maps URLs!
+            const dataPinRegex = /!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/;
+            const dataPinMatch = trimmed.match(dataPinRegex);
+            if (dataPinMatch) {
+                const lat = parseFloat(dataPinMatch[1]);
+                const lng = parseFloat(dataPinMatch[2]);
+                if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+                    return { lat, lng, label: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, source: 'Google Maps Pin' };
+                }
+            }
+
+            // 2. DMS format: 32°43'10.1"N 35°18'16.0"E
             const dmsRegex = /(\d{1,3})\s*[°º]\s*(\d{1,2})\s*['′]\s*(\d{1,2}(?:\.\d+)?)\s*["″]?\s*([NSns])\s*[,;\s]+\s*(\d{1,3})\s*[°º]\s*(\d{1,2})\s*['′]\s*(\d{1,2}(?:\.\d+)?)\s*["″]?\s*([EWew])/;
             const dmsMatch = trimmed.match(dmsRegex);
             if (dmsMatch) {
@@ -2512,64 +2583,169 @@
                 let lng = parseFloat(dmsMatch[5]) + parseFloat(dmsMatch[6]) / 60 + parseFloat(dmsMatch[7]) / 3600;
                 if (dmsMatch[8].toUpperCase() === 'W') lng = -lng;
                 if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
-                    return { lat, lng, label: `${lat.toFixed(6)}, ${lng.toFixed(6)}` };
+                    return { lat, lng, label: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, source: 'DMS' };
                 }
             }
 
-            // 2. Google Maps URL with @lat,lng or ?q=lat,lng
-            const urlCoordRegex = /(?:@|[?&](?:q|ll|destination)=)(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/;
+            // 3. Google Maps URL with @lat,lng, ?q=lat,lng, ll=lat,lng, destination=lat,lng, center=lat,lng, or /dir/.../lat,lng
+            const urlCoordRegex = /(?:@|[?&](?:q|query|ll|destination|center)=|\/dir\/[^/]*\/)(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/;
             const urlMatch = trimmed.match(urlCoordRegex);
             if (urlMatch) {
                 const lat = parseFloat(urlMatch[1]);
                 const lng = parseFloat(urlMatch[2]);
                 if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
-                    return { lat, lng, label: `${lat.toFixed(6)}, ${lng.toFixed(6)}` };
+                    return { lat, lng, label: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, source: 'Google Maps URL' };
                 }
             }
 
-            // 3. Plain decimal pair: 32.71947, 35.30444
+            // 4. Plain decimal pair: 32.71947, 35.30444
             const decRegex = /^(-?\d{1,2}\.\d+)\s*[,;\s]+\s*(-?\d{1,3}\.\d+)$/;
             const decMatch = trimmed.match(decRegex);
             if (decMatch) {
                 const lat = parseFloat(decMatch[1]);
                 const lng = parseFloat(decMatch[2]);
                 if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
-                    return { lat, lng, label: `${lat.toFixed(6)}, ${lng.toFixed(6)}` };
+                    return { lat, lng, label: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, source: 'Decimal' };
                 }
             }
 
             return null;
         }
 
-        // Normalize Hebrew spelling quirks & strip house numbers when villages/streets lack house numbers
+        // Detect Google Maps short links (maps.app.goo.gl / goo.gl/maps) & resolve final expanded URL
+        function extractGoogleMapsShortLink(input) {
+            if (!input) return null;
+            const match = input.match(/https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl\/maps)\/[^\s]+/i);
+            return match ? match[0] : null;
+        }
+
+        async function resolveGoogleMapsShortLink(shortUrl) {
+            // Try public redirect/unshorten endpoints with CORS support
+            const resolvers = [
+                async () => {
+                    const res = await fetch(`https://unshorten.me/json/${encodeURIComponent(shortUrl)}`);
+                    const data = await res.json();
+                    return data && (data.resolved_url || data.url);
+                },
+                async () => {
+                    const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(shortUrl)}`);
+                    const data = await res.json();
+                    if (data && data.status && data.status.url) return data.status.url;
+                    if (data && data.contents) {
+                        const m = data.contents.match(/https:\/\/www\.google\.com\/maps[^\s"'<>]+/);
+                        if (m) return m[0];
+                    }
+                    return null;
+                }
+            ];
+
+            for (const fn of resolvers) {
+                try {
+                    const resolved = await fn();
+                    if (resolved) {
+                        const coords = parseGoogleMapsCoordinates(resolved);
+                        if (coords) return { ...coords, resolvedUrl: resolved };
+                    }
+                } catch (e) {}
+            }
+            return null;
+        }
+
+        // Normalize Hebrew spelling quirks ONLY when query contains a street/house pattern, avoiding polluting pure city/settlement names
         function buildSmartHebrewSearchQueries(rawQuery) {
             const queries = [rawQuery];
-            // Strip trailing/standalone house numbers (useful in Arab villages & unnumbered streets)
             const withoutHouseNum = rawQuery.replace(/\b\d+[א-ת]?\b/g, '').replace(/\s+/g, ' ').trim();
             if (withoutHouseNum && withoutHouseNum !== rawQuery) {
                 queries.push(withoutHouseNum);
             }
 
-            // Common Hebrew spelling variations (כ/ח, ת/ט, י/יי, ו/וו, א/ע, ס/ש)
-            const phoneticVariants = new Set();
-            queries.forEach(q => {
-                phoneticVariants.add(q);
-                // Common typos like דוכיפת / דוחיפת / דוכפת
-                phoneticVariants.add(q.replace(/כ/g, 'ח'));
-                phoneticVariants.add(q.replace(/ח/g, 'כ'));
-                phoneticVariants.add(q.replace(/ת/g, 'ט'));
-                phoneticVariants.add(q.replace(/ט/g, 'ת'));
-                phoneticVariants.add(q.replace(/יי/g, 'י'));
-                phoneticVariants.add(q.replace(/וו/g, 'ו'));
-            });
+            // Only apply phonetic variations if multi-word street query (prevents breaking cities like "נצרת" -> "נצרט")
+            const words = withoutHouseNum.split(' ').filter(Boolean);
+            if (words.length >= 2) {
+                const phoneticVariants = new Set(queries);
+                queries.forEach(q => {
+                    phoneticVariants.add(q.replace(/כ/g, 'ח'));
+                    phoneticVariants.add(q.replace(/ח/g, 'כ'));
+                    phoneticVariants.add(q.replace(/יי/g, 'י'));
+                    phoneticVariants.add(q.replace(/וו/g, 'ו'));
+                });
+                return Array.from(phoneticVariants).slice(0, 3);
+            }
 
-            return Array.from(phoneticVariants).slice(0, 4);
+            return queries;
         }
 
-        function jumpToSearchedCoordinate(lat, lng, title, fullAddress) {
-            map.flyTo({ center: [lng, lat], zoom: 17, duration: 900 });
+        // Deduplicate settlement & address results so a settlement like "בסמת טבעון" or "נצרת" appears ONLY ONCE
+        function deduplicateGeocodingResults(rawResults, rawQuery) {
+            const cleanQueryNorm = normalizeSettlementTitle(rawQuery);
+            const scored = rawResults.map(item => {
+                const parts = (item.display_name || '').split(',').map(s => s.trim()).filter(Boolean);
+                const primaryName = parts[0] || '';
+                const shortName = parts.slice(0, 3).join(', ');
+                const normPrimary = normalizeSettlementTitle(primaryName);
+                const isSettlementType = ['city', 'town', 'village', 'municipality', 'administrative', 'suburb', 'hamlet'].includes(item.type) ||
+                    ['place', 'boundary'].includes(item.class);
 
-            if (tempSearchMarker) tempSearchMarker.remove();
+                let score = 0;
+                if (normPrimary === cleanQueryNorm) score += 100;
+                else if (normPrimary.includes(cleanQueryNorm) || cleanQueryNorm.includes(normPrimary)) score += 50;
+                if (isSettlementType) score += 40;
+                if (item.class === 'place') score += 25;
+                if (item.importance) score += Number(item.importance) * 10;
+
+                return {
+                    ...item,
+                    primaryName,
+                    shortName,
+                    normPrimary,
+                    isSettlementType,
+                    score
+                };
+            });
+
+            // Sort best match first
+            scored.sort((a, b) => b.score - a.score);
+
+            const unique = [];
+            for (const cand of scored) {
+                const lat1 = parseFloat(cand.lat);
+                const lng1 = parseFloat(cand.lon);
+
+                const isDup = unique.some(existing => {
+                    const lat2 = parseFloat(existing.lat);
+                    const lng2 = parseFloat(existing.lon);
+                    const distMeters = haversineDistance({ lat: lat1, lng: lng1 }, { lat: lat2, lng: lng2 });
+
+                    // Same normalized primary name OR same shortName OR settlement within 2.5km with matching root name
+                    if (cand.normPrimary && existing.normPrimary && cand.normPrimary === existing.normPrimary) return true;
+                    if (cand.shortName === existing.shortName) return true;
+                    if (cand.isSettlementType && existing.isSettlementType && distMeters < 2500 &&
+                        (cand.normPrimary.includes(existing.normPrimary) || existing.normPrimary.includes(cand.normPrimary))) {
+                        return true;
+                    }
+                    return false;
+                });
+
+                if (!isDup) {
+                    unique.push(cand);
+                }
+            }
+
+            // If the user searched a single settlement name (like "בסמת טבעון" or "נצרת") and the top result is an exact settlement match, return ONLY that 1 clean option!
+            if (unique.length > 0 && unique[0].normPrimary === cleanQueryNorm && unique[0].isSettlementType) {
+                return [unique[0]];
+            }
+
+            return unique.slice(0, 5);
+        }
+
+        function jumpToSearchedCoordinate(lat, lng, title, fullAddress, customZoom = 17) {
+            map.flyTo({ center: [lng, lat], zoom: customZoom, duration: 900 });
+
+            if (tempSearchMarker) {
+                tempSearchMarker.remove();
+                tempSearchMarker = null;
+            }
             const pinEl = document.createElement('div');
             pinEl.className = 'flex flex-col items-center cursor-pointer';
             pinEl.innerHTML = `
@@ -2597,10 +2773,18 @@
                 .addTo(map);
         }
 
+        function clearSearchedMarkerFromMap() {
+            if (tempSearchMarker) {
+                tempSearchMarker.remove();
+                tempSearchMarker = null;
+            }
+        }
+
         async function runUnifiedSearch(query) {
             const dropdown = document.getElementById('search-results-dropdown');
             const q = query.trim();
             if (!q) {
+                clearSearchedMarkerFromMap();
                 dropdown.classList.add('hidden');
                 state.highlightedItemId = null;
                 renderMapItems();
@@ -2609,7 +2793,7 @@
 
             dropdown.innerHTML = '';
 
-            // 0. Check if user pasted Google Maps Coordinates (DMS, Decimal, or Link)
+            // 0A. Check if user pasted Google Maps Coordinates or Full Google Maps URL
             const parsedCoord = parseGoogleMapsCoordinates(q);
             if (parsedCoord) {
                 const coordRow = document.createElement('button');
@@ -2618,11 +2802,11 @@
                 coordRow.innerHTML = `
                     <div class="flex items-center gap-2.5 min-w-0">
                         <span class="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm">
-                            <i class="ph-bold ph-crosshair text-lg"></i>
+                            <i class="ph-bold ph-map-pin-line text-lg"></i>
                         </span>
                         <div class="min-w-0">
                             <div class="font-black text-sm text-slate-950 truncate" dir="ltr">${escapeHtml(parsedCoord.label)}</div>
-                            <div class="text-xs text-emerald-800 font-bold truncate">קואורדינטות Google Maps זוהו בהצלחה</div>
+                            <div class="text-xs text-emerald-800 font-bold truncate">הנקודה המדויקת מקישור Google Maps זוהתה!</div>
                         </div>
                     </div>
                     <span class="text-[11px] font-extrabold bg-emerald-600 text-white px-2.5 py-1 rounded-lg shrink-0">התמקד בנקודה</span>
@@ -2630,10 +2814,69 @@
                 coordRow.addEventListener('click', async () => {
                     dropdown.classList.add('hidden');
                     const resolvedAddr = await reverseGeocode(parsedCoord.lat, parsedCoord.lng);
-                    jumpToSearchedCoordinate(parsedCoord.lat, parsedCoord.lng, parsedCoord.label, resolvedAddr);
+                    jumpToSearchedCoordinate(parsedCoord.lat, parsedCoord.lng, parsedCoord.label, resolvedAddr, 18);
                 });
                 dropdown.appendChild(coordRow);
                 dropdown.classList.remove('hidden');
+                return;
+            }
+
+            // 0B. Check if user pasted a Google Maps Short Link (https://maps.app.goo.gl/... or goo.gl/maps/...)
+            const shortLink = extractGoogleMapsShortLink(q);
+            if (shortLink) {
+                dropdown.innerHTML = `
+                    <div class="p-4 flex items-center gap-3 text-xs font-extrabold text-slate-800 bg-blue-50/60">
+                        <i class="ph-bold ph-spinner animate-spin text-xl text-blue-600"></i>
+                        <span>מפענח קישור מקוצר של Google Maps ומאתר את הנקודה המדויקת...</span>
+                    </div>
+                `;
+                dropdown.classList.remove('hidden');
+
+                const resolved = await resolveGoogleMapsShortLink(shortLink);
+                dropdown.innerHTML = '';
+
+                if (resolved) {
+                    const row = document.createElement('button');
+                    row.type = 'button';
+                    row.className = 'w-full text-right px-4 py-3.5 hover:bg-emerald-50 flex items-center justify-between gap-3 transition-colors bg-emerald-50/60';
+                    row.innerHTML = `
+                        <div class="flex items-center gap-2.5 min-w-0">
+                            <span class="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                                <i class="ph-bold ph-map-pin-line text-lg"></i>
+                            </span>
+                            <div class="min-w-0">
+                                <div class="font-black text-sm text-slate-950 truncate" dir="ltr">${escapeHtml(resolved.label)}</div>
+                                <div class="text-xs text-emerald-800 font-bold truncate">הקישור המקוצר פוענח בהצלחה!</div>
+                            </div>
+                        </div>
+                        <span class="text-[11px] font-extrabold bg-emerald-600 text-white px-2.5 py-1 rounded-lg shrink-0">התמקד בנקודה</span>
+                    `;
+                    row.addEventListener('click', async () => {
+                        dropdown.classList.add('hidden');
+                        const resolvedAddr = await reverseGeocode(resolved.lat, resolved.lng);
+                        jumpToSearchedCoordinate(resolved.lat, resolved.lng, resolved.label, resolvedAddr, 18);
+                    });
+                    dropdown.appendChild(row);
+                    dropdown.classList.remove('hidden');
+                } else {
+                    dropdown.innerHTML = `
+                        <div class="p-4 space-y-2 text-right">
+                            <div class="text-xs font-black text-amber-900 flex items-center gap-1.5">
+                                <i class="ph-bold ph-warning-circle text-base text-amber-600"></i>
+                                קישור מקוצר של Google Maps נחסם לפענוח אוטומטי בדפדפן
+                            </div>
+                            <p class="text-[11px] text-slate-600 leading-relaxed">
+                                פתח את הקישור המקוצר בדפדפן, העתק את <b>כתובת ה-URL המלאה</b> משורת הכתובת (שמכילה <code>@32...</code>) או לחץ לחיצה ארוכה על הנקודה בגוגל מפות והעתק את הקואורדינטות, והדבק כאן.
+                            </p>
+                            <a href="${escapeHtml(shortLink)}" target="_blank" rel="noopener noreferrer"
+                                class="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold px-3 py-2 rounded-xl shadow">
+                                <i class="ph-bold ph-arrow-square-out text-sm"></i>
+                                פתח קישור מקוצר להעתקת הכתובת המלאה
+                            </a>
+                        </div>
+                    `;
+                    dropdown.classList.remove('hidden');
+                }
                 return;
             }
 
@@ -2646,7 +2889,6 @@
                 (item.notes && item.notes.toLowerCase().includes(qLower))
             );
 
-            // Highlight matching polygon on the map immediately while searching!
             if (matchedSaved.length > 0) {
                 state.highlightedItemId = matchedSaved[0].id;
                 renderMapItems();
@@ -2655,58 +2897,40 @@
                 renderMapItems();
             }
 
-            // 2. Smart Israel address search (handles missing house numbers in villages & spelling variations)
-            const candidateQueries = buildSmartHebrewSearchQueries(q);
-            const seenPlaceIds = new Set();
+            // 2. Check built-in Israeli Settlements Gazetteer first (guarantees instant 1-option result for "נצרת", "בסמת טבעון", etc.)
+            const gazetteerMatch = matchGazetteerSettlement(q);
             let addressResults = [];
 
-            for (const cand of candidateQueries) {
-                if (addressResults.length >= 6) break;
-                try {
-                    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(cand)}&countrycodes=il&accept-language=he&limit=5`;
-                    const res = await fetch(url);
-                    const batch = await res.json();
-                    if (Array.isArray(batch)) {
-                        batch.forEach(item => {
-                            if (!seenPlaceIds.has(item.place_id)) {
-                                seenPlaceIds.add(item.place_id);
-                                addressResults.push(item);
-                            }
-                        });
-                    }
-                } catch (e) {
-                    console.warn('Address search variant failed:', e);
-                }
-            }
+            if (gazetteerMatch) {
+                addressResults.push({
+                    place_id: `gazetteer_${gazetteerMatch.name}`,
+                    lat: gazetteerMatch.lat,
+                    lon: gazetteerMatch.lng,
+                    display_name: gazetteerMatch.fullName,
+                    class: 'place',
+                    type: 'city',
+                    isGazetteerSettlement: true
+                });
+            } else {
+                // 3. Query Nominatim for Israeli addresses / settlements and deduplicate to a single clean result per settlement
+                const candidateQueries = buildSmartHebrewSearchQueries(q);
+                const rawBatch = [];
 
-            // Also try Photon geocoder (excellent fuzzy typo tolerance for Hebrew streets like דוכיפת/דוחיפת)
-            if (addressResults.length < 3) {
-                try {
-                    const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&bbox=34.2,29.4,35.9,33.4&limit=4`;
-                    const pRes = await fetch(photonUrl);
-                    const pData = await pRes.json();
-                    if (pData && Array.isArray(pData.features)) {
-                        for (let idx = 0; idx < pData.features.length; idx++) {
-                            const f = pData.features[idx];
-                            const props = f.properties || {};
-                            const geom = f.geometry || {};
-                            if (Array.isArray(geom.coordinates)) {
-                                const lat = geom.coordinates[1];
-                                const lng = geom.coordinates[0];
-                                // Convert English Photon results into clean Hebrew address via reverse geocoding
-                                const hebrewLabel = await reverseGeocode(lat, lng);
-                                if (hebrewLabel && !addressResults.some(r => r.display_name === hebrewLabel)) {
-                                    addressResults.push({
-                                        place_id: `photon_${idx}_${Date.now()}`,
-                                        lat,
-                                        lon: lng,
-                                        display_name: hebrewLabel
-                                    });
-                                }
-                            }
+                for (const cand of candidateQueries) {
+                    if (rawBatch.length >= 8) break;
+                    try {
+                        const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(cand)}&countrycodes=il&accept-language=he&addressdetails=1&limit=8`;
+                        const res = await fetch(url);
+                        const batch = await res.json();
+                        if (Array.isArray(batch)) {
+                            rawBatch.push(...batch);
                         }
+                    } catch (e) {
+                        console.warn('Address search variant failed:', e);
                     }
-                } catch (e) {}
+                }
+
+                addressResults = deduplicateGeocodingResults(rawBatch, q);
             }
 
             if (matchedSaved.length === 0 && addressResults.length === 0) {
@@ -2747,16 +2971,17 @@
                 dropdown.appendChild(row);
             });
 
-            // Render geocoding results
+            // Render deduplicated geocoding results
             addressResults.forEach(place => {
-                const shortName = place.display_name.split(',').slice(0, 3).join(',').trim();
+                const shortName = place.shortName || place.display_name.split(',').slice(0, 3).join(',').trim();
+                const isSettlement = place.isGazetteerSettlement || place.isSettlementType;
                 const row = document.createElement('button');
                 row.type = 'button';
                 row.className = 'w-full text-right px-4 py-3 hover:bg-blue-50 flex items-center justify-between gap-3 transition-colors';
                 row.innerHTML = `
                     <div class="flex items-center gap-2.5 min-w-0">
                         <span class="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
-                            <i class="ph-bold ph-map-pin text-base"></i>
+                            <i class="ph-bold ph-${isSettlement ? 'buildings' : 'map-pin'} text-base"></i>
                         </span>
                         <div class="min-w-0">
                             <div class="font-bold text-sm text-slate-900 truncate">${escapeHtml(shortName)}</div>
@@ -2769,7 +2994,7 @@
                     dropdown.classList.add('hidden');
                     const lat = parseFloat(place.lat);
                     const lng = parseFloat(place.lon);
-                    jumpToSearchedCoordinate(lat, lng, shortName, place.display_name);
+                    jumpToSearchedCoordinate(lat, lng, shortName, place.display_name, isSettlement ? 14.5 : 17);
                 });
                 dropdown.appendChild(row);
             });
@@ -2811,6 +3036,9 @@
             searchInput.addEventListener('input', (e) => {
                 const val = e.target.value;
                 clearSearchBtn.classList.toggle('hidden', !val);
+                if (!val.trim()) {
+                    clearSearchedMarkerFromMap();
+                }
                 clearTimeout(searchDebounceTimer);
                 searchDebounceTimer = setTimeout(() => runUnifiedSearch(val), 280);
             });
@@ -2823,6 +3051,7 @@
                 searchInput.value = '';
                 clearSearchBtn.classList.add('hidden');
                 document.getElementById('search-results-dropdown').classList.add('hidden');
+                clearSearchedMarkerFromMap();
                 state.highlightedItemId = null;
                 renderMapItems();
             });
@@ -3098,7 +3327,7 @@ service cloud.firestore {
                 showToast(state.showPermanentLabels ? 'כל ההוספות שלך מוצגות על המפה' : 'כל ההוספות שלך (שמות, סימונים ומתחמים) הוסתרו', 'info');
             });
 
-            // GPS Locate
+            // GPS Locate (Modern navigation beacon instead of a plain blue dot)
             document.getElementById('gps-locate-btn').addEventListener('click', () => {
                 if (!navigator.geolocation) {
                     showToast('הדפדפן אינו תומך באיתור מיקום', 'warning');
@@ -3106,13 +3335,21 @@ service cloud.firestore {
                 }
                 showToast('מאתר את מיקומך...', 'info');
                 navigator.geolocation.getCurrentPosition((pos) => {
-                    const { latitude, longitude } = pos.coords;
+                    const { latitude, longitude, heading } = pos.coords;
                     map.flyTo({ center: [longitude, latitude], zoom: 16.5, duration: 900 });
 
                     if (gpsMarker) gpsMarker.remove();
                     const el = document.createElement('div');
-                    el.className = 'w-5 h-5 rounded-full bg-blue-600 border-3 border-white shadow-lg ring-4 ring-blue-500/35';
-                    gpsMarker = new maplibregl.Marker({ element: el })
+                    el.className = 'relative flex items-center justify-center w-14 h-14 pointer-events-none';
+                    const rotDeg = typeof heading === 'number' && !Number.isNaN(heading) ? heading : 0;
+                    el.innerHTML = `
+                        <span class="gps-beacon-ring absolute w-9 h-9 rounded-full bg-indigo-500/40 border border-indigo-400"></span>
+                        <span class="relative w-10 h-10 rounded-2xl bg-slate-950 border-2 border-white shadow-2xl flex items-center justify-center text-emerald-400" style="transform: rotate(${rotDeg}deg);">
+                            <i class="ph-fill ph-navigation-arrow text-xl"></i>
+                        </span>
+                        <span class="absolute -bottom-5 px-2 py-0.5 rounded-md bg-slate-950/90 text-white text-[10px] font-extrabold border border-white/30 whitespace-nowrap shadow">המיקום שלי</span>
+                    `;
+                    gpsMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
                         .setLngLat([longitude, latitude])
                         .addTo(map);
                 }, () => {
